@@ -90,3 +90,4 @@ pylint.log
 # Custom folders
 uploads/
 outputs/
+models/
