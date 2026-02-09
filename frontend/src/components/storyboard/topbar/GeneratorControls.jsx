@@ -63,12 +63,25 @@ const GeneratorControls = () => {
 
     // --- 2. GENERATE IMAGE PROMPTS (Bulk) ---
     const handleGenerateImagePrompts = async () => {
+        // --- VALIDATION START ---
+        const charData = getStorageItem('sb_global_character');
+        const styleData = getStorageItem('sb_global_style');
+
+        if (charData.enabled && (!charData.text || !charData.text.trim())) {
+            toast.error("Character is enabled but empty. Please disable it or add a description.");
+            return;
+        }
+        if (styleData.enabled && (!styleData.text || !styleData.text.trim())) {
+            toast.error("Style is enabled but empty. Please disable it or add a description.");
+            return;
+        }
+        // --- VALIDATION END ---
+
         setIsGeneratingPrompts(true);
         const toastId = toast.loading("Starting prompt generation...");
 
         try {
-            const charData = getStorageItem('sb_global_character');
-            const styleData = getStorageItem('sb_global_style');
+            const sessionData = getStorageItem('sb_global_session_key');
 
             const characterContext = charData.enabled ? charData.text : null;
             const styleContext = styleData.enabled ? styleData.text : null;
@@ -82,7 +95,6 @@ const GeneratorControls = () => {
                 if (item.type !== 'scene') continue;
                 sceneIndex++;
 
-                // Skip if prompt exists
                 if (item.prompt && item.prompt.trim().length > 0) {
                     previousContext = item.prompt;
                     scenesSkipped++;
@@ -100,7 +112,6 @@ const GeneratorControls = () => {
 
                 // toast.loading(`Generating prompt for Scene ${sceneIndex}...`, { id: toastId });
 
-                // --- API Call ---
                 const res = await fetch(`${backendUrl}/api/generate-image-prompt`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -129,7 +140,6 @@ const GeneratorControls = () => {
                     scenesProcessed++;
                 }
 
-                // --- ADDED DELAY ---
                 await new Promise(resolve => setTimeout(resolve, 300));
             }
 

@@ -76,15 +76,26 @@ const Scene = ({ scene, index }) => {
     };
 
     const handleGeneratePrompt = async () => {
+        // --- VALIDATION START ---
+        const charData = getStorageItem('sb_global_character');
+        const styleData = getStorageItem('sb_global_style');
+
+        if (charData.enabled && (!charData.text || !charData.text.trim())) {
+            toast.error("Character is enabled but empty. Please disable it or add a description.");
+            return;
+        }
+        if (styleData.enabled && (!styleData.text || !styleData.text.trim())) {
+            toast.error("Style is enabled but empty. Please disable it or add a description.");
+            return;
+        }
+        // --- VALIDATION END ---
+
         setIsGeneratingTxt(true);
         const toastId = toast.loading("Generating prompt...");
 
         try {
             const sceneText = scene.sentences.flatMap(s => s.words.map(w => w.text)).join(' ').trim();
             if (!sceneText) throw new Error("Scene has no text");
-
-            const charData = getStorageItem('sb_global_character');
-            const styleData = getStorageItem('sb_global_style');
 
             let previousContext = null;
             const allScenes = state.items.filter(i => i.type === 'scene');
@@ -175,7 +186,6 @@ const Scene = ({ scene, index }) => {
                                 </div>
                             )}
 
-                            {/* Overlay Actions */}
                             <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
                                 <label className="cursor-pointer bg-white p-2 rounded-full hover:bg-slate-100 text-slate-700 shadow-sm transition-transform hover:scale-110" title="Upload">
                                     <FaUpload size={16} />
@@ -184,7 +194,7 @@ const Scene = ({ scene, index }) => {
 
                                 {scene.image && (
                                     <>
-                                        {/* Expand Image Dialog */}
+                                        {/* Expand Image Dialog with pt-9 */}
                                         <Dialog>
                                             <DialogTrigger asChild>
                                                 <button className="bg-white p-2 rounded-full hover:bg-slate-100 text-slate-700 shadow-sm transition-transform hover:scale-110" title="Expand">

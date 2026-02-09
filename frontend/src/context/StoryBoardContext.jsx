@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useReducer, useEffect } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, useState } from 'react';
 import { getInitialData, generateId, loadFromStorage, saveToStorage, duplicateSceneData } from '../lib/storyboard-utils';
 import toast from 'react-hot-toast';
 
@@ -6,7 +6,12 @@ const StoryBoardContext = createContext();
 
 const reducer = (state, action) => {
     switch (action.type) {
+        case 'INIT_STATE':
+            // Used when loading from IndexedDB on startup
+            return { ...action.payload, isDirty: false, selection: [] };
+
         case 'SET_STATE':
+            // Used for File Import
             return { ...action.payload, isDirty: true, selection: [] };
 
         case 'CLEAR_BOARD':
@@ -83,10 +88,8 @@ const reducer = (state, action) => {
         }
 
         case 'APPLY_AUTO_GROUPING': {
-            // payload: [[0, 1, 2], [3, 4], ...] (List of indices)
             const groups = action.payload;
 
-            // 1. Flatten all current items to a single list of sentences
             const allSentences = [];
             state.items.forEach(item => {
                 if (item.type === 'sentence') allSentences.push(item);
@@ -95,20 +98,15 @@ const reducer = (state, action) => {
 
             if (allSentences.length === 0) return state;
 
-            // 2. Reconstruct Items based on groups
             const newItems = groups.map(groupIndices => {
-                // Get sentences for this group
                 const groupSentences = groupIndices.map(idx => allSentences[idx]).filter(Boolean);
-
                 if (groupSentences.length === 0) return null;
 
-                // Create a new Scene for this group
                 return {
                     type: 'scene',
                     id: generateId(),
                     image: null,
                     prompt: "",
-                    // Ensure deep copy of sentence structure
                     sentences: groupSentences.map(s => ({
                         id: s.id,
                         words: s.words
@@ -257,16 +255,39 @@ const reducer = (state, action) => {
 };
 
 export const StoryBoardProvider = ({ children }) => {
-    const [state, dispatch] = useReducer(reducer, null, loadFromStorage);
+    // 1. Initialize with default/empty state synchronous
+    const [state, dispatch] = useReducer(reducer, getInitialData());
+    const [isLoaded, setIsLoaded] = useState(false);
 
+    // 2. Load from IndexedDB on Mount
+    useEffect(() => {
+        const hydrate = async () => {
+            const savedData = await loadFromStorage();
+            if (savedData) {
+                dispatch({ type: 'INIT_STATE', payload: savedData });
+            }
+            setIsLoaded(true);
+        };
+        hydrate();
+    }, []);
+
+    // 3. Save to IndexedDB when Dirty
     useEffect(() => {
         if (!state.isDirty) return;
-        const handler = setTimeout(() => {
-            saveToStorage(state);
+
+        // Debounce save by 500ms
+        const handler = setTimeout(async () => {
+            await saveToStorage(state);
             dispatch({ type: 'MARK_SAVED' });
-        }, 300);
+        }, 500);
+
         return () => clearTimeout(handler);
     }, [state]);
+
+    // Optional: Don't render until loaded to prevent flash of empty state
+    if (!isLoaded) {
+        return <div className="min-h-screen flex items-center justify-center text-slate-400">Loading Storyboard...</div>;
+    }
 
     return (
         <StoryBoardContext.Provider value={{ state, dispatch }}>
