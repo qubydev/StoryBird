@@ -1,5 +1,4 @@
 import { LuAudioLines } from "react-icons/lu"
-import { VscPulse } from "react-icons/vsc";
 
 import { Dock, DockIcon } from "@/components/ui/dock"
 import { Link, useLocation } from 'react-router-dom'
@@ -20,11 +19,6 @@ export default function BottomDock() {
                         src="/logo.svg"
                         className="size-7"
                     />
-                </Link>
-            </DockIcon>
-            <DockIcon>
-                <Link to="/">
-                    <VscPulse size={24} className={getIconClass("/")} />
                 </Link>
             </DockIcon>
             <DockIcon>

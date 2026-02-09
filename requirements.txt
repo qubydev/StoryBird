@@ -1,5 +1,10 @@
+--index-url https://download.pytorch.org/whl/cu124
+
 fastapi[all]
 uvicorn
 redis
 nanoid
+torch
+torchvision
+torchaudio
 openai-whisper

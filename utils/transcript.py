@@ -1,8 +1,9 @@
 import whisper
 import torch
 from nanoid import generate
+import os
 
-MODELS_FOLDER = "../models"
+MODELS_FOLDER = os.path.join(os.path.dirname(__file__), "../models/whisper")
 
 def format_data(data):
     formatted_data = []
@@ -21,7 +22,7 @@ def format_data(data):
     return formatted_data
 
 
-def transcribe_audio(file_path: str):
+def transcribe_audio_file(file_path: str):
     print("Loading Whisper model...")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
@@ -36,11 +37,12 @@ def transcribe_audio(file_path: str):
     result = model.transcribe(
         file_path,
         word_timestamps=True,
-        verbose=False
+        verbose=False,
     )
 
     del model
     if device == "cuda":
         torch.cuda.empty_cache()
+    print("Transcription complete, memory cleared.")
 
-    return format_data(result)
+    return result

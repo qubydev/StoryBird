@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pathlib import Path
-from backend.routes import router  # your API routes
+from routes import router
 
 app = FastAPI(title="Anim-Board API")
 
@@ -25,8 +25,8 @@ app.add_middleware(
 app.include_router(router, prefix="/api")
 
 # --- Serve frontend ---
-dist_path = Path(__file__).parent.parent / "frontend" / "dist"
-app.mount("/static", StaticFiles(directory=dist_path / "assets"), name="static")  # optional, Vite assets
+dist_path = Path(__file__).parent / "frontend" / "dist"
+app.mount("/static", StaticFiles(directory=dist_path / "assets"), name="static")
 
 # Fallback route for SPA
 @app.get("/{full_path:path}")
@@ -35,3 +35,8 @@ async def spa_fallback(full_path: str):
     if index_file.exists():
         return FileResponse(index_file)
     return {"error": "Frontend build not found"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="localhost", port=8000)
