@@ -1,55 +1,57 @@
 import React, { useState, useEffect } from 'react';
 import { useStoryBoard } from '../../context/StoryBoardContext';
-import { generateId } from '../../lib/storyboard-utils';
-import WordDialog from './WordDialog';
+import { hasOverlap } from '../../lib/storyboard-utils';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { FaPlus, FaCheck, FaTrash } from 'react-icons/fa';
+import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
+import { FaCheck, FaTrash, FaPen } from 'react-icons/fa';
+import toast from 'react-hot-toast';
 
 const Sentence = ({ sentence, sceneId = null, isNested = false, index = -1, onSelectionChange }) => {
     const { state, dispatch } = useStoryBoard();
     const [isEditing, setIsEditing] = useState(false);
 
-    const isSelected = state.selection.includes(sentence.id);
-    const isEmpty = sentence.words.length === 0;
+    const [localData, setLocalData] = useState({
+        text: sentence.text || '',
+        start: sentence.start || 0,
+        end: sentence.end || 0
+    });
+
+    const isSelected = (state.selection || []).includes(sentence.id);
+    const isEmpty = !sentence.text || sentence.text.trim() === '';
 
     useEffect(() => {
-        if (isEmpty) setIsEditing(true);
-    }, [isEmpty]);
+        setLocalData({ text: sentence.text || '', start: sentence.start || 0, end: sentence.end || 0 });
+        if (isEmpty && !isEditing) setIsEditing(true);
+    }, [sentence, isEmpty]);
 
-    const getNextTimeSlot = () => {
-        let maxEnd = 0;
-        const traverse = (items) => {
-            items.forEach(i => {
-                if (i.type === 'sentence') i.words.forEach(w => maxEnd = Math.max(maxEnd, w.end));
-                if (i.type === 'scene') traverse(i.sentences.map(s => ({ ...s, type: 'sentence' })));
-            });
-        };
-        traverse(state.items);
+    const handleSave = () => {
+        const newStart = parseFloat(localData.start) || 0;
+        const newEnd = parseFloat(localData.end) || 0;
 
-        if (sentence.words.length > 0) {
-            return {
-                start: parseFloat((sentence.words[sentence.words.length - 1].end + 0.1).toFixed(2)),
-                end: parseFloat((sentence.words[sentence.words.length - 1].end + 1.1).toFixed(2))
-            };
+        // 1. Validate proper order
+        if (newStart >= newEnd) {
+            return toast.error("Start time must be before end time");
         }
-        return { start: parseFloat((maxEnd + 0.2).toFixed(2)), end: parseFloat((maxEnd + 1.2).toFixed(2)) };
+
+        // 2. Validate Overlap
+        const conflict = hasOverlap(state.items, newStart, newEnd, sentence.id);
+        if (conflict) {
+            return toast.error(`Time overlaps with another sentence: "${conflict.text.substring(0, 15)}..." (${conflict.start}s - ${conflict.end}s)`);
+        }
+
+        const updates = {
+            text: localData.text.trim(),
+            start: newStart,
+            end: newEnd
+        };
+
+        dispatch({ type: 'UPDATE_SENTENCE', payload: { id: sentence.id, updates } });
+        setIsEditing(false);
     };
 
-    const handleCreateWord = (data) => {
-        const newWord = { ...data, id: generateId() };
-        dispatch({ type: 'ADD_WORD', payload: { sentenceId: sentence.id, word: newWord } });
-    };
-
-    const handleEditWord = (id, data) => {
-        dispatch({ type: 'UPDATE_WORD', payload: { id, updates: data } });
-    };
-
-    const handleDeleteWord = (id) => {
-        dispatch({ type: 'DELETE_WORD', payload: id });
-    };
-
-    const handleDeleteSentence = () => {
+    const handleDelete = () => {
         if (isNested && sceneId) {
             dispatch({ type: 'DELETE_SENTENCE_FROM_SCENE', payload: { sceneId, sentenceId: sentence.id } });
         } else {
@@ -57,104 +59,81 @@ const Sentence = ({ sentence, sceneId = null, isNested = false, index = -1, onSe
         }
     };
 
-    // Custom Handler to capture Shift Key
     const handleCheckboxClick = (e) => {
-        // Prevent default checkbox behavior from firing twice if needed, 
-        // but here we just intercept the click to get modifier keys
         if (onSelectionChange && !isNested) {
             onSelectionChange(sentence.id, index, e.nativeEvent.shiftKey);
         }
     };
 
-    const handleDialogChange = (isOpen) => {
-        if (!isOpen && sentence.words.length === 0) handleDeleteSentence();
-    };
-
-    const baseClasses = "flex items-start gap-3 p-2 transition-colors group relative";
+    const baseClasses = "flex items-start gap-3 p-3 transition-colors group relative";
     const topLevelClasses = "bg-white border border-slate-200 shadow-sm rounded my-2";
     const nestedClasses = "hover:bg-slate-50 border-b border-transparent hover:border-slate-100 last:border-0";
     const selectedClasses = "bg-blue-50 border-blue-200 shadow-none";
 
     return (
-        <div className={`
-        ${baseClasses}
-        ${!isNested ? topLevelClasses : nestedClasses}
-        ${isSelected ? selectedClasses : ''}
-    `}>
-
+        <div className={`${baseClasses} ${!isNested ? topLevelClasses : nestedClasses} ${isSelected ? selectedClasses : ''}`}>
             {!isNested && !isEditing && (
-                <div className="pt-3">
-                    {/* We wrap the Checkbox in a span to capture the Click event with modifiers */}
+                <div className="pt-1">
                     <span onClickCapture={handleCheckboxClick}>
-                        <Checkbox
-                            checked={isSelected}
-                            // We disable the default onCheckedChange to rely on our custom click handler for Shift support
-                            onCheckedChange={() => { }}
-                            className="cursor-pointer"
-                        />
+                        <Checkbox checked={isSelected} onCheckedChange={() => { }} className="cursor-pointer" />
                     </span>
                 </div>
             )}
 
-            <div className="flex-grow">
+            <div className="flex-grow w-full">
                 {!isEditing ? (
-                    <div className="flex items-center gap-2">
-                        <p
+                    <div className="flex items-start gap-2">
+                        <div
                             onClick={() => setIsEditing(true)}
-                            className="flex-1 cursor-pointer text-slate-700 p-2 rounded leading-relaxed min-h-[40px] border border-transparent hover:border-slate-200"
+                            className="flex-1 cursor-pointer text-slate-700 p-1 rounded min-h-[24px] border border-transparent hover:border-slate-200"
                         >
-                            {sentence.words.map(w => w.text).join(' ')}
-                        </p>
+                            <span className="leading-relaxed">{sentence.text || <span className="text-slate-400 italic">Empty sentence...</span>}</span>
+                            <span className="ml-2 text-[10px] font-mono text-slate-400 bg-slate-100 px-1 rounded border border-slate-200">
+                                {sentence.start}s - {sentence.end}s
+                            </span>
+                        </div>
 
-                        <Button
-                            variant="ghost" size="icon"
-                            className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500"
-                            onClick={handleDeleteSentence}
-                        >
-                            <FaTrash size={14} />
-                        </Button>
-                    </div>
-                ) : (
-                    <div className="flex flex-wrap items-center gap-2 bg-slate-50 p-3 rounded-md border border-slate-200 shadow-inner">
-                        {sentence.words.map(word => (
-                            <WordDialog
-                                key={word.id}
-                                mode="edit"
-                                wordData={word}
-                                onSave={(data) => handleEditWord(word.id, data)}
-                                onDelete={() => handleDeleteWord(word.id)}
-                            >
-                                <button className="px-2 py-1 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors border border-slate-200 bg-white">
-                                    {word.text}
-                                </button>
-                            </WordDialog>
-                        ))}
-
-                        <WordDialog
-                            mode="create"
-                            wordData={{ text: '', ...getNextTimeSlot() }}
-                            onSave={handleCreateWord}
-                            forceOpen={isEmpty}
-                            onOpenChange={isEmpty ? handleDialogChange : undefined}
-                        >
-                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 rounded-full bg-blue-100 text-blue-600 hover:bg-blue-200">
-                                <FaPlus size={10} />
+                        <div className="flex opacity-0 group-hover:opacity-100 transition-opacity gap-1">
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-400 hover:text-blue-500" onClick={() => setIsEditing(true)}>
+                                <FaPen size={12} />
                             </Button>
-                        </WordDialog>
-
-                        <div className="ml-auto flex items-center gap-1">
-                            <Button
-                                size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-400 hover:text-red-600"
-                                onClick={handleDeleteSentence}
-                            >
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-400 hover:text-red-500" onClick={handleDelete}>
                                 <FaTrash size={12} />
                             </Button>
-                            <Button
-                                size="sm" variant="outline" className="h-7 text-xs bg-white"
-                                onClick={() => setIsEditing(false)}
-                            >
-                                <FaCheck className="mr-1" /> Done
-                            </Button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex flex-col gap-3 bg-slate-50 p-3 rounded-md border border-slate-200 shadow-inner">
+                        <Textarea
+                            value={localData.text}
+                            onChange={(e) => setLocalData({ ...localData, text: e.target.value })}
+                            className="text-sm resize-none h-20"
+                            placeholder="Enter sentence text..."
+                            autoFocus
+                        />
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-sm text-slate-600 font-medium">
+                                <label>Start:</label>
+                                <Input
+                                    type="number" step="0.1" className="w-20 h-8 text-xs"
+                                    value={localData.start}
+                                    onChange={(e) => setLocalData({ ...localData, start: e.target.value })}
+                                />
+                                <label className="ml-2">End:</label>
+                                <Input
+                                    type="number" step="0.1" className="w-20 h-8 text-xs"
+                                    value={localData.end}
+                                    onChange={(e) => setLocalData({ ...localData, end: e.target.value })}
+                                />
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Button size="sm" variant="ghost" className="h-8 text-xs text-red-500 hover:bg-red-50" onClick={handleDelete}>
+                                    <FaTrash className="mr-1" /> Delete
+                                </Button>
+                                <Button size="sm" className="h-8 text-xs bg-blue-600 hover:bg-blue-700" onClick={handleSave}>
+                                    <FaCheck className="mr-1" /> Save
+                                </Button>
+                            </div>
                         </div>
                     </div>
                 )}

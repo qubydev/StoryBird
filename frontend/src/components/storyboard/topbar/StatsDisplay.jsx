@@ -23,11 +23,14 @@ const StatsDisplay = () => {
         dispatch({ type: 'CLEAR_SELECTION' });
     };
 
-    if (state.selection.length > 0) {
+    // Safely fallback to empty array
+    const selection = state.selection || [];
+
+    if (selection.length > 0) {
         return (
             <div className="flex flex-wrap items-center gap-2 animate-in slide-in-from-top-2 fade-in duration-200">
                 <Button size="sm" onClick={handleGroup} className="h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white shadow-sm">
-                    <FaObjectGroup className="mr-2" /> Group ({state.selection.length})
+                    <FaObjectGroup className="mr-2" /> Group ({selection.length})
                 </Button>
                 <Button size="sm" variant="outline" onClick={handleDeleteSelection} className="h-8 text-xs text-red-600 hover:bg-red-50 border-red-200">
                     <FaTrash className="mr-2" /> Delete

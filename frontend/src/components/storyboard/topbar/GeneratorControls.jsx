@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useStoryBoard } from '../../../context/StoryBoardContext';
 import { Button } from '@/components/ui/button';
-import { FaMagic, FaImage, FaSpinner, FaPenFancy } from 'react-icons/fa';
+import { FaMagic, FaSpinner, FaPenFancy } from 'react-icons/fa';
 import toast from 'react-hot-toast';
 import { getStorageItem } from '../../../lib/storyboard-utils';
 
@@ -11,7 +11,6 @@ const GeneratorControls = () => {
     const [isGeneratingPrompts, setIsGeneratingPrompts] = useState(false);
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
 
-    // --- 1. GENERATE SCENES (Group Sentences) ---
     const handleGenerateScenes = async () => {
         setIsGeneratingScenes(true);
         const toastId = toast.loading("Analyzing script...");
@@ -26,11 +25,9 @@ const GeneratorControls = () => {
             if (allSentences.length === 0) throw new Error("No sentences found");
 
             const payload = allSentences.map(s => {
-                let duration = 0;
-                if (s.words.length > 0) duration = s.words[s.words.length - 1].end - s.words[0].start;
                 return {
-                    text: s.words.map(w => w.text).join(' '),
-                    duration: parseFloat(duration.toFixed(2))
+                    text: s.text || '',
+                    duration: parseFloat((s.end - s.start).toFixed(2)) || 0
                 };
             });
 
@@ -61,9 +58,7 @@ const GeneratorControls = () => {
         }
     };
 
-    // --- 2. GENERATE IMAGE PROMPTS (Bulk) ---
     const handleGenerateImagePrompts = async () => {
-        // --- VALIDATION START ---
         const charData = getStorageItem('sb_global_character');
         const styleData = getStorageItem('sb_global_style');
 
@@ -75,14 +70,11 @@ const GeneratorControls = () => {
             toast.error("Style is enabled but empty. Please disable it or add a description.");
             return;
         }
-        // --- VALIDATION END ---
 
         setIsGeneratingPrompts(true);
         const toastId = toast.loading("Starting prompt generation...");
 
         try {
-            const sessionData = getStorageItem('sb_global_session_key');
-
             const characterContext = charData.enabled ? charData.text : null;
             const styleContext = styleData.enabled ? styleData.text : null;
 
@@ -107,10 +99,8 @@ const GeneratorControls = () => {
                     continue;
                 }
 
-                const sceneText = item.sentences.flatMap(s => s.words.map(w => w.text)).join(' ').trim();
+                const sceneText = item.sentences.map(s => s.text).join(' ').trim();
                 if (!sceneText) continue;
-
-                // toast.loading(`Generating prompt for Scene ${sceneIndex}...`, { id: toastId });
 
                 const res = await fetch(`${backendUrl}/api/generate-image-prompt`, {
                     method: 'POST',

@@ -165,11 +165,10 @@ export const GlobalSettings = () => {
 
     return (
         <div className="flex items-center gap-2">
-            <MainSettingsDialog onUpdate={refreshConfig} config={config} />
-            <div className="hidden sm:block h-5 w-[1px] bg-slate-200 mx-1"></div>
             <GlobalInputButton title="Character" storageKey="sb_global_character" icon={FaUser} isDisabled={!config.character.enabled} onUpdate={refreshConfig} />
             <GlobalInputButton title="Style" storageKey="sb_global_style" icon={FaPalette} isDisabled={!config.style.enabled} onUpdate={refreshConfig} />
             <GlobalInputButton title="Session Key" storageKey="sb_global_session_key" icon={FaKey} processInput={parseSessionCookies} isDisabled={false} onUpdate={refreshConfig} />
+            <MainSettingsDialog onUpdate={refreshConfig} config={config} />
         </div>
     );
 };

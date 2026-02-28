@@ -76,25 +76,21 @@ const Scene = ({ scene, index }) => {
     };
 
     const handleGeneratePrompt = async () => {
-        // --- VALIDATION START ---
         const charData = getStorageItem('sb_global_character');
         const styleData = getStorageItem('sb_global_style');
 
         if (charData.enabled && (!charData.text || !charData.text.trim())) {
-            toast.error("Character is enabled but empty. Please disable it or add a description.");
-            return;
+            return toast.error("Character is enabled but empty. Please disable it or add a description.");
         }
         if (styleData.enabled && (!styleData.text || !styleData.text.trim())) {
-            toast.error("Style is enabled but empty. Please disable it or add a description.");
-            return;
+            return toast.error("Style is enabled but empty. Please disable it or add a description.");
         }
-        // --- VALIDATION END ---
 
         setIsGeneratingTxt(true);
         const toastId = toast.loading("Generating prompt...");
 
         try {
-            const sceneText = scene.sentences.flatMap(s => s.words.map(w => w.text)).join(' ').trim();
+            const sceneText = scene.sentences.map(s => s.text).join(' ').trim();
             if (!sceneText) throw new Error("Scene has no text");
 
             let previousContext = null;
@@ -140,7 +136,7 @@ const Scene = ({ scene, index }) => {
     };
 
     const handleCopyScript = () => {
-        const text = scene.sentences.map(s => s.words.map(w => w.text).join(' ')).join('\n');
+        const text = scene.sentences.map(s => s.text).join('\n');
         if (!text.trim()) { toast.error("No text"); return; }
         navigator.clipboard.writeText(text);
         toast.success("Scene text copied");
@@ -173,8 +169,6 @@ const Scene = ({ scene, index }) => {
 
             <CardContent className="p-0">
                 <div className="flex flex-col md:flex-row border-b border-slate-100 bg-slate-50/30 p-4">
-
-                    {/* LEFT: Image Area */}
                     <div className="w-full md:w-1/3 pr-4 border-b md:border-b-0 md:border-r border-slate-100">
                         <div className="aspect-video bg-slate-100 rounded border border-slate-200 overflow-hidden relative group flex items-center justify-center">
                             {scene.image ? (
@@ -194,7 +188,6 @@ const Scene = ({ scene, index }) => {
 
                                 {scene.image && (
                                     <>
-                                        {/* Expand Image Dialog with pt-9 */}
                                         <Dialog>
                                             <DialogTrigger asChild>
                                                 <button className="bg-white p-2 rounded-full hover:bg-slate-100 text-slate-700 shadow-sm transition-transform hover:scale-110" title="Expand">
@@ -222,7 +215,6 @@ const Scene = ({ scene, index }) => {
                         </div>
                     </div>
 
-                    {/* RIGHT: Controls */}
                     <div className="w-full md:w-2/3 pl-0 md:pl-4 pt-4 md:pt-0 flex flex-col gap-2">
                         <Textarea
                             placeholder="Describe scene..."

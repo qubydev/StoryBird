@@ -1,18 +1,18 @@
 import React, { createContext, useContext, useReducer, useEffect, useState } from 'react';
-import { getInitialData, generateId, loadFromStorage, saveToStorage, duplicateSceneData } from '../lib/storyboard-utils';
+import { getInitialData, generateId, loadFromStorage, saveToStorage, duplicateSceneData, getMaxEndTime } from '../lib/storyboard-utils';
 import toast from 'react-hot-toast';
 
 const StoryBoardContext = createContext();
 
 const reducer = (state, action) => {
+    const currentSelection = state.selection || [];
+
     switch (action.type) {
         case 'INIT_STATE':
-            // Used when loading from IndexedDB on startup
-            return { ...action.payload, isDirty: false, selection: [] };
+            return { ...getInitialData(), ...action.payload, isDirty: false, selection: action.payload?.selection || [] };
 
         case 'SET_STATE':
-            // Used for File Import
-            return { ...action.payload, isDirty: true, selection: [] };
+            return { ...getInitialData(), ...action.payload, isDirty: true, selection: [] };
 
         case 'CLEAR_BOARD':
             return { ...getInitialData(), isDirty: true };
@@ -22,40 +22,39 @@ const reducer = (state, action) => {
 
         case 'TOGGLE_SELECTION': {
             const id = action.payload;
-            const isSelected = state.selection.includes(id);
+            const isSelected = currentSelection.includes(id);
             return {
                 ...state,
                 selection: isSelected
-                    ? state.selection.filter(sid => sid !== id)
-                    : [...state.selection, id]
+                    ? currentSelection.filter(sid => sid !== id)
+                    : [...currentSelection, id]
             };
         }
 
         case 'SET_SELECTION': {
-            return { ...state, selection: action.payload };
+            return { ...state, selection: action.payload || [] };
         }
 
         case 'ADD_SELECTION': {
-            const newIds = action.payload.filter(id => !state.selection.includes(id));
-            return { ...state, selection: [...state.selection, ...newIds] };
+            const newIds = (action.payload || []).filter(id => !currentSelection.includes(id));
+            return { ...state, selection: [...currentSelection, ...newIds] };
         }
 
         case 'CLEAR_SELECTION':
             return { ...state, selection: [] };
 
         case 'DELETE_SELECTED': {
-            if (state.selection.length === 0) return state;
+            if (currentSelection.length === 0) return state;
             return {
                 ...state,
-                items: state.items.filter(i => !state.selection.includes(i.id)),
+                items: state.items.filter(i => !currentSelection.includes(i.id)),
                 selection: [],
                 isDirty: true
             };
         }
 
-        // --- GROUPING & AUTO-GEN ---
         case 'GROUP_SELECTED': {
-            const selectedItems = state.items.filter(i => state.selection.includes(i.id));
+            const selectedItems = state.items.filter(i => currentSelection.includes(i.id));
 
             if (selectedItems.some(i => i.type !== 'sentence')) {
                 toast.error("Can only group Sentences");
@@ -68,12 +67,12 @@ const reducer = (state, action) => {
                 id: generateId(),
                 image: null,
                 prompt: "",
-                sentences: selectedItems.map(s => ({ ...s, words: s.words }))
+                sentences: selectedItems.map(s => ({ ...s }))
             };
 
             let inserted = false;
             const finalItems = state.items.reduce((acc, item) => {
-                if (state.selection.includes(item.id)) {
+                if (currentSelection.includes(item.id)) {
                     if (!inserted) {
                         acc.push(newScene);
                         inserted = true;
@@ -89,8 +88,8 @@ const reducer = (state, action) => {
 
         case 'APPLY_AUTO_GROUPING': {
             const groups = action.payload;
-
             const allSentences = [];
+
             state.items.forEach(item => {
                 if (item.type === 'sentence') allSentences.push(item);
                 else if (item.type === 'scene') allSentences.push(...item.sentences);
@@ -107,19 +106,11 @@ const reducer = (state, action) => {
                     id: generateId(),
                     image: null,
                     prompt: "",
-                    sentences: groupSentences.map(s => ({
-                        id: s.id,
-                        words: s.words
-                    }))
+                    sentences: groupSentences.map(s => ({ ...s }))
                 };
             }).filter(Boolean);
 
-            return {
-                ...state,
-                items: newItems,
-                selection: [],
-                isDirty: true
-            };
+            return { ...state, items: newItems, selection: [], isDirty: true };
         }
 
         case 'UNGROUP_SCENE': {
@@ -136,17 +127,17 @@ const reducer = (state, action) => {
             return { ...state, items: newItems, isDirty: true };
         }
 
-        // --- CRUD ---
-        case 'ADD_ITEM':
+        case 'ADD_ITEM': {
+            const maxEnd = getMaxEndTime(state.items);
+            const startStr = parseFloat((maxEnd > 0 ? maxEnd + 0.1 : 0).toFixed(2));
+            const endStr = parseFloat((startStr + 1.0).toFixed(2));
+
             const newItem = action.payload.type === 'scene'
                 ? { type: 'scene', id: generateId(), sentences: [], image: null, prompt: "" }
-                : { type: 'sentence', id: generateId(), words: [] };
+                : { type: 'sentence', id: generateId(), text: "", start: startStr, end: endStr };
 
-            return {
-                ...state,
-                items: [...state.items, newItem],
-                isDirty: true
-            };
+            return { ...state, items: [...state.items, newItem], isDirty: true };
+        }
 
         case 'DELETE_ITEM':
             return {
@@ -172,20 +163,25 @@ const reducer = (state, action) => {
                 isDirty: true
             };
 
-        case 'ADD_SENTENCE':
+        case 'ADD_SENTENCE': {
+            const maxEnd = getMaxEndTime(state.items);
+            const startStr = parseFloat((maxEnd > 0 ? maxEnd + 0.1 : 0).toFixed(2));
+            const endStr = parseFloat((startStr + 1.0).toFixed(2));
+
             return {
                 ...state,
                 items: state.items.map(item => {
                     if (item.id === action.payload && item.type === 'scene') {
                         return {
                             ...item,
-                            sentences: [...item.sentences, { id: generateId(), words: [] }]
+                            sentences: [...item.sentences, { id: generateId(), text: "", start: startStr, end: endStr }]
                         };
                     }
                     return item;
                 }),
                 isDirty: true
             };
+        }
 
         case 'DELETE_SENTENCE_FROM_SCENE':
             return {
@@ -202,48 +198,22 @@ const reducer = (state, action) => {
                 isDirty: true
             };
 
-        case 'ADD_WORD':
-        case 'UPDATE_WORD':
-        case 'DELETE_WORD': {
-            const mapSentence = (sent) => {
-                if (sent.id !== action.payload.sentenceId && action.type === 'ADD_WORD') return sent;
-
-                let newWords = sent.words;
-                if (action.type === 'ADD_WORD') {
-                    newWords = [...sent.words, action.payload.word];
-                } else if (action.type === 'DELETE_WORD') {
-                    newWords = sent.words.filter(w => w.id !== action.payload);
-                } else if (action.type === 'UPDATE_WORD') {
-                    newWords = sent.words.map(w => w.id === action.payload.id ? { ...w, ...action.payload.updates } : w);
-                }
-                return { ...sent, words: newWords };
-            };
-
-            const mapItem = (item) => {
-                if (item.type === 'sentence') {
-                    if (action.type === 'ADD_WORD' && item.id === action.payload.sentenceId) return mapSentence(item);
-                    if (action.type !== 'ADD_WORD') return mapSentence(item);
-                    return item;
+        case 'UPDATE_SENTENCE': {
+            const updateItem = (item) => {
+                if (item.type === 'sentence' && item.id === action.payload.id) {
+                    return { ...item, ...action.payload.updates };
                 }
                 if (item.type === 'scene') {
-                    const updatedSentences = item.sentences.map(mapSentence);
-                    if (action.type === 'DELETE_WORD') {
-                        return { ...item, sentences: updatedSentences.filter(s => s.words.length > 0) };
-                    }
-                    return { ...item, sentences: updatedSentences };
+                    return {
+                        ...item,
+                        sentences: item.sentences.map(s =>
+                            s.id === action.payload.id ? { ...s, ...action.payload.updates } : s
+                        )
+                    };
                 }
                 return item;
             };
-
-            let newItems = state.items.map(mapItem);
-            if (action.type === 'DELETE_WORD') {
-                newItems = newItems.filter(item => {
-                    if (item.type === 'sentence' && item.words.length === 0) return false;
-                    return true;
-                });
-            }
-
-            return { ...state, items: newItems, isDirty: true };
+            return { ...state, items: state.items.map(updateItem), isDirty: true };
         }
 
         case 'MARK_SAVED':
@@ -255,11 +225,9 @@ const reducer = (state, action) => {
 };
 
 export const StoryBoardProvider = ({ children }) => {
-    // 1. Initialize with default/empty state synchronous
     const [state, dispatch] = useReducer(reducer, getInitialData());
     const [isLoaded, setIsLoaded] = useState(false);
 
-    // 2. Load from IndexedDB on Mount
     useEffect(() => {
         const hydrate = async () => {
             const savedData = await loadFromStorage();
@@ -271,20 +239,15 @@ export const StoryBoardProvider = ({ children }) => {
         hydrate();
     }, []);
 
-    // 3. Save to IndexedDB when Dirty
     useEffect(() => {
         if (!state.isDirty) return;
-
-        // Debounce save by 500ms
         const handler = setTimeout(async () => {
             await saveToStorage(state);
             dispatch({ type: 'MARK_SAVED' });
         }, 500);
-
         return () => clearTimeout(handler);
     }, [state]);
 
-    // Optional: Don't render until loaded to prevent flash of empty state
     if (!isLoaded) {
         return <div className="min-h-screen flex items-center justify-center text-slate-400">Loading Storyboard...</div>;
     }

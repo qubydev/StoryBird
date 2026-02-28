@@ -13,7 +13,7 @@ const TopBar = () => {
         <header className="sticky top-0 z-50 w-full bg-white border-b border-slate-200 shadow-sm">
             <div className="flex flex-col gap-3 px-6 py-3">
 
-                {/* ROW 1: Title & File Menu */}
+                {/* ROW 1: Title & File Menu + Settings */}
                 <div className="flex flex-wrap items-center justify-between gap-y-3">
                     <div className="flex items-center gap-4">
                         <img src="/logo.svg" alt="Logo" className="h-9 w-9" />
@@ -24,17 +24,19 @@ const TopBar = () => {
                             placeholder="Untitled Storyboard"
                         />
                     </div>
-                    <FileMenu />
+
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                        <FileMenu />
+                        <GlobalSettings />
+                    </div>
                 </div>
 
-                {/* ROW 2: Stats/Selection & Generators/Settings */}
+                {/* ROW 2: Stats/Selection & Generators */}
                 <div className="flex flex-wrap items-center justify-between gap-y-3 pt-1">
                     <StatsDisplay />
 
                     <div className="flex flex-wrap items-center gap-2">
                         <GeneratorControls />
-                        <div className="hidden sm:block h-5 w-[1px] bg-slate-200 mx-1"></div>
-                        <GlobalSettings />
                     </div>
                 </div>
             </div>
