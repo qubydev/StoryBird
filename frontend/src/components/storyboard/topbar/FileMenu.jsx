@@ -80,7 +80,7 @@ const FileMenu = () => {
 
             <Button variant="ghost" size="sm" asChild className="h-9 text-sm px-2 sm:px-3">
                 <label className="cursor-pointer">
-                    <FaUpload className="mr-2" /> Import
+                    <FaUpload className="mr-2" /> Board
                     <input type="file" hidden onChange={handleProjectImport} accept=".json" />
                 </label>
             </Button>
@@ -88,7 +88,7 @@ const FileMenu = () => {
             <Button variant="ghost" size="sm" asChild className="h-9 text-sm px-2 sm:px-3 text-slate-600 hover:text-purple-600 hover:bg-purple-50">
                 <label className="cursor-pointer" title="Import JSON Transcript">
                     {/* Changed Icon to FaUpload as requested */}
-                    <FaUpload className="mr-2" /> Transcript
+                    <FaUpload className="mr-2" /> Transcription
                     <input type="file" hidden onChange={handleTranscriptImport} accept=".json" />
                 </label>
             </Button>
