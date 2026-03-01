@@ -118,11 +118,16 @@ def generate_image(
 
         except ValueError:
             message = response.text or "Unknown error occurred"
+        
+        should_refresh = response.status_code in REFRESH_STATUSES
+        if should_refresh:
+            r_client.delete(WHISK_SESSION_TOKEN_KEY)
 
         raise WhiskError(
             response.status_code,
             message,
-            refresh=response.status_code in REFRESH_STATUSES
+            refresh=should_refresh,
+            errors=error_data.get("error", {}).get("details", [])
         )
 
     return response.json()

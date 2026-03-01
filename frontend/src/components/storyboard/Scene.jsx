@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useStoryBoard } from '../../context/StoryBoardContext';
-import { getSceneDuration, fileToBase64, getStorageItem } from '../../lib/storyboard-utils';
+import { getSceneDuration, fileToBase64, getStorageItem, refreshSessionKey } from '../../lib/storyboard-utils';
 import Sentence from './Sentence';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -87,7 +87,9 @@ const Scene = ({ scene, index }) => {
 
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                console.log("err data:", err);
+                if (err.refresh) {
+                    refreshSessionKey();
+                }
                 throw new Error(err.message || "Failed to generate image");
             }
 
