@@ -42,7 +42,7 @@ const GeneratorControls = () => {
 
             if (!res.ok) {
                 const errData = await res.json().catch(() => ({}));
-                throw new Error(errData.detail || errData.message || `Error ${res.status}`);
+                throw new Error(errData.message || `Error ${res.status}`);
             }
 
             const data = await res.json();

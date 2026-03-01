@@ -63,16 +63,56 @@ const Scene = ({ scene, index }) => {
         toast.success("Scene cleaned");
     };
 
-    const handleGenerateImage = () => {
-        if (!scene.prompt) return toast.error("Enter prompt");
+    const handleGenerateImage = async () => {
+        if (!scene.prompt) return toast.error("Enter a prompt first");
+
+        const sessionData = getStorageItem('sb_global_session_key');
+        if (!sessionData.text) {
+            return toast.error("Session Key is missing. Please add it first.");
+        }
+
         setIsGeneratingImg(true);
-        setTimeout(() => {
+        const toastId = toast.loading("Generating image...");
+
+        try {
+            const backendUrl = import.meta.env.VITE_BACKEND_URL;
+            const res = await fetch(`${backendUrl}/api/generate-image`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt: scene.prompt,
+                    session_token: sessionData.text,
+                })
+            });
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                console.log("err data:", err);
+                throw new Error(err.message || "Failed to generate image");
+            }
+
+            const data = await res.json();
+
+            let returnedImage = null;
+            if (data?.imagePanels?.[0]?.generatedImages?.[0]?.encodedImage) {
+                const rawBase64 = data.imagePanels[0].generatedImages[0].encodedImage;
+                returnedImage = rawBase64.startsWith('data:') ? rawBase64 : `data:image/jpeg;base64,${rawBase64}`;
+            }
+
+            if (returnedImage) {
+                dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'image', value: returnedImage } });
+                setLastGeneratedPrompt(scene.prompt);
+                toast.success("Image Generated", { id: toastId });
+            } else {
+                throw new Error("No valid image data found in the response");
+            }
+
+        } catch (e) {
+            console.error(e);
+            toast.error(e.message, { id: toastId });
+        } finally {
             setIsGeneratingImg(false);
-            const dummyImage = "https://picsum.photos/seed/" + scene.id + "/400/225";
-            dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'image', value: dummyImage } });
-            setLastGeneratedPrompt(scene.prompt);
-            toast.success("Image Generated");
-        }, 2000);
+        }
     };
 
     const handleGeneratePrompt = async () => {
@@ -107,15 +147,16 @@ const Scene = ({ scene, index }) => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    scene_lines: sceneText,
+                    scene_sentences: sceneText,
+                    previous_scene_context: previousContext,
                     character_description: charData.enabled ? charData.text : null,
-                    animation_style: styleData.enabled ? styleData.text : null
+                    style: styleData.enabled ? styleData.text : null
                 })
             });
 
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                throw new Error(err.detail?.[0]?.msg || err.message || "Failed to generate");
+                throw new Error(err.message || "Failed to generate");
             }
 
             const data = await res.json();

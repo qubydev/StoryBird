@@ -51,3 +51,7 @@ async def _generate_image(request: GenerateImageRequest):
         session_token=request.session_token
     )
     return JSONResponse(data)
+
+@router.post("/err-check")
+async def _err_check(body: dict):
+    return JSONResponse({"received": body})

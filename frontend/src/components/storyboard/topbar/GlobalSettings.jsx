@@ -133,7 +133,7 @@ const GlobalInputButton = ({ title, storageKey, icon: Icon, processInput, isDisa
             <DialogContent className="sm:max-w-[500px]">
                 <DialogHeader><DialogTitle className="flex items-center gap-2"><Icon /> {title}</DialogTitle></DialogHeader>
                 <div className="py-4">
-                    <Textarea value={text} onChange={(e) => setText(e.target.value)} className="h-[300px] font-mono text-xs" placeholder={`Enter ${title}...`} />
+                    <Textarea value={text} onChange={(e) => setText(e.target.value)} className="h-[300px] break-all font-mono text-xs" placeholder={`Enter ${title}...`} />
                 </div>
                 <DialogFooter><Button onClick={handleSave}>{text ? "Save Changes" : "Save"}</Button></DialogFooter>
             </DialogContent>
@@ -161,7 +161,12 @@ export const GlobalSettings = () => {
         });
     };
 
-    useEffect(() => { refreshConfig(); }, []);
+    useEffect(() => {
+        refreshConfig();
+
+        window.addEventListener('session_key_changed', refreshConfig);
+        return () => window.removeEventListener('session_key_changed', refreshConfig);
+    }, []);
 
     return (
         <div className="flex items-center gap-2">
