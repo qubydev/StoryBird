@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogTrigger, DialogTitle } from '@/components/ui/dialog';
-import { FaImage, FaMagic, FaTrash, FaUpload, FaDownload, FaPlus, FaCopy, FaPen, FaUnlink, FaEraser, FaExpand } from 'react-icons/fa';
+import { FaImage, FaMagic, FaTrash, FaUpload, FaDownload, FaPlus, FaCopy, FaPen, FaUnlink, FaEraser, FaExpand, FaSpinner } from 'react-icons/fa';
 import toast from 'react-hot-toast';
 
 const Scene = ({ scene, index }) => {
@@ -17,6 +17,14 @@ const Scene = ({ scene, index }) => {
 
     const [lastGeneratedPrompt, setLastGeneratedPrompt] = useState(scene.image ? scene.prompt : null);
     const { start, end } = getSceneDuration(scene.sentences);
+
+    // Global loading tracking
+    const isGlobalGenerating = scene.imageGenStatus === 'generating';
+    const isGlobalQueued = scene.imageGenStatus === 'queued';
+    const isBusy = isGeneratingImg || isGlobalGenerating || isGlobalQueued;
+
+    // Prompt button specific loading tracking
+    const isPromptBusy = isGeneratingTxt || scene.promptGenStatus === 'generating';
 
     useEffect(() => {
         if (!scene.image) {
@@ -135,24 +143,16 @@ const Scene = ({ scene, index }) => {
             const sceneText = scene.sentences.map(s => s.text).join(' ').trim();
             if (!sceneText) throw new Error("Scene has no text");
 
-            let previousContext = null;
-            const allScenes = state.items.filter(i => i.type === 'scene');
-            const currentSceneIndex = allScenes.findIndex(s => s.id === scene.id);
-
-            if (currentSceneIndex > 0) {
-                previousContext = allScenes[currentSceneIndex - 1].prompt || null;
-            }
-
             const backendUrl = import.meta.env.VITE_BACKEND_URL;
 
+            // Updated schema
             const res = await fetch(`${backendUrl}/api/generate-image-prompt`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    scene_sentences: sceneText,
-                    previous_scene_context: previousContext,
+                    scene_lines: sceneText,
                     character_description: charData.enabled ? charData.text : null,
-                    style: styleData.enabled ? styleData.text : null
+                    animation_style: styleData.enabled ? styleData.text : null
                 })
             });
 
@@ -188,7 +188,7 @@ const Scene = ({ scene, index }) => {
         dispatch({ type: 'UNGROUP_SCENE', payload: scene.id });
     };
 
-    const isImageGenDisabled = isGeneratingImg || (!!scene.image && scene.prompt === lastGeneratedPrompt);
+    const isImageGenDisabled = isBusy || (!!scene.image && scene.prompt === lastGeneratedPrompt);
 
     return (
         <Card className="overflow-hidden border-slate-200 shadow-sm transition-shadow">
@@ -211,8 +211,19 @@ const Scene = ({ scene, index }) => {
 
             <CardContent className="p-0">
                 <div className="flex flex-col md:flex-row border-b border-slate-100 bg-slate-50/30 p-4">
+
                     <div className="w-full md:w-1/3 pr-4 border-b md:border-b-0 md:border-r border-slate-100">
                         <div className="aspect-video bg-slate-100 rounded border border-slate-200 overflow-hidden relative group flex items-center justify-center">
+
+                            {isBusy && (
+                                <div className="absolute inset-0 bg-white/80 backdrop-blur-[2px] flex flex-col items-center justify-center z-20">
+                                    <FaSpinner className="animate-spin text-purple-600 mb-2" size={24} />
+                                    <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">
+                                        {isGlobalQueued ? "Queued" : "Generating"}
+                                    </span>
+                                </div>
+                            )}
+
                             {scene.image ? (
                                 <img src={scene.image} alt="Scene" className="w-full h-full object-cover" />
                             ) : (
@@ -222,38 +233,40 @@ const Scene = ({ scene, index }) => {
                                 </div>
                             )}
 
-                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                                <label className="cursor-pointer bg-white p-2 rounded-full hover:bg-slate-100 text-slate-700 shadow-sm transition-transform hover:scale-110" title="Upload">
-                                    <FaUpload size={16} />
-                                    <input type="file" hidden onChange={handleImageUpload} accept="image/*" />
-                                </label>
+                            {!isBusy && (
+                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                                    <label className="cursor-pointer bg-white p-2 rounded-full hover:bg-slate-100 text-slate-700 shadow-sm transition-transform hover:scale-110" title="Upload">
+                                        <FaUpload size={16} />
+                                        <input type="file" hidden onChange={handleImageUpload} accept="image/*" />
+                                    </label>
 
-                                {scene.image && (
-                                    <>
-                                        <Dialog>
-                                            <DialogTrigger asChild>
-                                                <button className="bg-white p-2 rounded-full hover:bg-slate-100 text-slate-700 shadow-sm transition-transform hover:scale-110" title="Expand">
-                                                    <FaExpand size={16} />
-                                                </button>
-                                            </DialogTrigger>
-                                            <DialogContent className="max-w-4xl w-auto p-1 bg-white/95 border-none shadow-2xl">
-                                                <DialogTitle className="sr-only">Scene {index + 1} Image</DialogTitle>
-                                                <div className="flex justify-center items-center pt-9">
-                                                    <img src={scene.image} alt={`Scene ${index + 1}`} className="max-h-[80vh] w-auto rounded shadow-sm" />
-                                                </div>
-                                            </DialogContent>
-                                        </Dialog>
+                                    {scene.image && (
+                                        <>
+                                            <Dialog>
+                                                <DialogTrigger asChild>
+                                                    <button className="bg-white p-2 rounded-full hover:bg-slate-100 text-slate-700 shadow-sm transition-transform hover:scale-110" title="Expand">
+                                                        <FaExpand size={16} />
+                                                    </button>
+                                                </DialogTrigger>
+                                                <DialogContent className="max-w-4xl w-auto p-1 bg-white/95 border-none shadow-2xl">
+                                                    <DialogTitle className="sr-only">Scene {index + 1} Image</DialogTitle>
+                                                    <div className="flex justify-center items-center pt-9">
+                                                        <img src={scene.image} alt={`Scene ${index + 1}`} className="max-h-[80vh] w-auto rounded shadow-sm" />
+                                                    </div>
+                                                </DialogContent>
+                                            </Dialog>
 
-                                        <button onClick={handleDownloadImage} className="bg-white p-2 rounded-full hover:bg-slate-100 text-slate-700 shadow-sm transition-transform hover:scale-110" title="Download">
-                                            <FaDownload size={16} />
-                                        </button>
+                                            <button onClick={handleDownloadImage} className="bg-white p-2 rounded-full hover:bg-slate-100 text-slate-700 shadow-sm transition-transform hover:scale-110" title="Download">
+                                                <FaDownload size={16} />
+                                            </button>
 
-                                        <button onClick={handleDeleteImage} className="bg-white p-2 rounded-full hover:bg-red-50 text-red-500 shadow-sm transition-transform hover:scale-110" title="Delete">
-                                            <FaTrash size={16} />
-                                        </button>
-                                    </>
-                                )}
-                            </div>
+                                            <button onClick={handleDeleteImage} className="bg-white p-2 rounded-full hover:bg-red-50 text-red-500 shadow-sm transition-transform hover:scale-110" title="Delete">
+                                                <FaTrash size={16} />
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -266,10 +279,10 @@ const Scene = ({ scene, index }) => {
                         />
                         <div className="flex flex-wrap gap-2">
                             <Button size="sm" className={`h-7 text-xs text-white ${isImageGenDisabled ? 'bg-slate-400' : 'bg-purple-600 hover:bg-purple-700'}`} onClick={handleGenerateImage} disabled={isImageGenDisabled} title={isImageGenDisabled ? "Change prompt to regenerate" : "Generate Image"}>
-                                {isGeneratingImg ? "..." : <><FaMagic className="mr-1" /> Gen Image</>}
+                                {isBusy ? "..." : <><FaMagic className="mr-1" /> Gen Image</>}
                             </Button>
-                            <Button size="sm" variant="outline" className="h-7 text-xs text-slate-600" onClick={handleGeneratePrompt} disabled={isGeneratingTxt}>
-                                {isGeneratingTxt ? "..." : <><FaPen className="mr-1" /> Gen Prompt</>}
+                            <Button size="sm" variant="outline" className="h-7 text-xs text-slate-600" onClick={handleGeneratePrompt} disabled={isPromptBusy}>
+                                {isPromptBusy ? "..." : <><FaPen className="mr-1" /> Gen Prompt</>}
                             </Button>
                             <Button size="sm" variant="outline" className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50 border-red-100" onClick={handleCleanScene} title="Clear Prompt & Image">
                                 <FaEraser className="mr-1" /> Clean

@@ -1,20 +1,65 @@
 import React, { createContext, useContext, useReducer, useEffect, useState } from 'react';
 import { getInitialData, generateId, loadFromStorage, saveToStorage, duplicateSceneData, getMaxEndTime } from '../lib/storyboard-utils';
+import toast from 'react-hot-toast';
 
 const StoryBoardContext = createContext();
+
+// Helper to prevent frozen loading states if user refreshes mid-generation
+const cleanPayloadItems = (payloadItems) => {
+    if (!payloadItems || !Array.isArray(payloadItems)) return [];
+    return payloadItems.map(item => {
+        if (item.type === 'scene') {
+            const { imageGenStatus, promptGenStatus, ...rest } = item;
+            return rest;
+        }
+        return item;
+    });
+};
 
 const reducer = (state, action) => {
     const currentSelection = state.selection || [];
 
     switch (action.type) {
         case 'INIT_STATE':
-            return { ...getInitialData(), ...action.payload, isDirty: false, selection: action.payload?.selection || [] };
+            return {
+                ...getInitialData(),
+                ...action.payload,
+                items: cleanPayloadItems(action.payload?.items),
+                isDirty: false,
+                selection: action.payload?.selection || []
+            };
 
         case 'SET_STATE':
-            return { ...getInitialData(), ...action.payload, isDirty: true, selection: [] };
+            return {
+                ...getInitialData(),
+                ...action.payload,
+                items: cleanPayloadItems(action.payload?.items),
+                isDirty: true,
+                selection: []
+            };
 
         case 'CLEAR_BOARD':
             return { ...getInitialData(), isDirty: true };
+
+        // --- NEW BULK CLEAN ACTIONS ---
+        case 'CLEAN_ALL_IMAGES':
+            return {
+                ...state,
+                items: state.items.map(item =>
+                    item.type === 'scene' ? { ...item, image: null, imageGenStatus: null } : item
+                ),
+                isDirty: true
+            };
+
+        case 'CLEAN_ALL_PROMPTS':
+            return {
+                ...state,
+                items: state.items.map(item =>
+                    item.type === 'scene' ? { ...item, prompt: "", promptGenStatus: null } : item
+                ),
+                isDirty: true
+            };
+        // ------------------------------
 
         case 'UPDATE_TITLE':
             return { ...state, title: action.payload, isDirty: true };
@@ -60,7 +105,6 @@ const reducer = (state, action) => {
 
             if (selectedIndices.length === 0) return state;
 
-            // Silent fail fallback (Real validation happens in the component now)
             for (let i = 1; i < selectedIndices.length; i++) {
                 if (selectedIndices[i] !== selectedIndices[i - 1] + 1) return state;
             }

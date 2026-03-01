@@ -1,16 +1,25 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useStoryBoard } from '../../../context/StoryBoardContext';
 import { Button } from '@/components/ui/button';
-import { FaMagic, FaSpinner, FaPenFancy } from 'react-icons/fa';
+import { FaMagic, FaSpinner, FaPenFancy, FaImages, FaStop } from 'react-icons/fa';
 import toast from 'react-hot-toast';
-import { getStorageItem } from '../../../lib/storyboard-utils';
+import { getStorageItem, refreshSessionKey } from '../../../lib/storyboard-utils';
 
 const GeneratorControls = () => {
     const { state, dispatch } = useStoryBoard();
     const [isGeneratingScenes, setIsGeneratingScenes] = useState(false);
+
+    // Tracking states
     const [isGeneratingPrompts, setIsGeneratingPrompts] = useState(false);
+    const [isGeneratingAllImages, setIsGeneratingAllImages] = useState(false);
+
+    // Abort controllers for stopping processes
+    const promptAbortControllerRef = useRef(null);
+    const imageAbortControllerRef = useRef(null);
+
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
 
+    // --- 1. GENERATE SCENES ---
     const handleGenerateScenes = async () => {
         setIsGeneratingScenes(true);
         const toastId = toast.loading("Analyzing script...");
@@ -61,7 +70,16 @@ const GeneratorControls = () => {
         }
     };
 
+    // --- 2. GENERATE PROMPTS (WITH STOP ABILITY) ---
     const handleGenerateImagePrompts = async () => {
+        // If already running, abort the process
+        if (isGeneratingPrompts) {
+            if (promptAbortControllerRef.current) {
+                promptAbortControllerRef.current.abort();
+            }
+            return;
+        }
+
         const charData = getStorageItem('sb_global_character');
         const styleData = getStorageItem('sb_global_style');
 
@@ -77,81 +95,268 @@ const GeneratorControls = () => {
         setIsGeneratingPrompts(true);
         const toastId = toast.loading("Generating image prompts...");
 
+        promptAbortControllerRef.current = new AbortController();
+        const signal = promptAbortControllerRef.current.signal;
+
+        const scenesToProcess = state.items.filter(item => item.type === 'scene');
+
         try {
-            let previousContext = null;
             let scenesProcessed = 0;
             let scenesSkipped = 0;
-            let sceneIndex = 0;
 
-            for (const item of state.items) {
-                if (item.type !== 'scene') continue;
-                sceneIndex++;
+            for (let i = 0; i < scenesToProcess.length; i++) {
+                if (signal.aborted) break;
+
+                const item = scenesToProcess[i];
 
                 if (item.prompt && item.prompt.trim().length > 0) {
-                    previousContext = item.prompt;
                     scenesSkipped++;
-                    console.warn(`Skipping Scene ${sceneIndex} (Prompt exists)`);
                     continue;
                 }
 
                 const sceneText = item.sentences.map(s => s.text).join(' ').trim();
-                if (!sceneText) continue;
-
-                const res = await fetch(`${backendUrl}/api/generate-image-prompt`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        scene_lines: sceneText,
-                        character_description: charData.enabled ? charData.text : null,
-                        animation_style: styleData.enabled ? styleData.text : null
-                    })
-                });
-
-                if (!res.ok) {
-                    console.error(`Failed to generate prompt for scene ${item.id}`);
+                if (!sceneText) {
+                    scenesSkipped++;
                     continue;
                 }
 
-                const data = await res.json();
-                const generatedPrompt = data.prompt;
+                try {
+                    dispatch({ type: 'UPDATE_SCENE_META', payload: { id: item.id, field: 'promptGenStatus', value: 'generating' } });
 
-                if (generatedPrompt) {
-                    dispatch({
-                        type: 'UPDATE_SCENE_META',
-                        payload: { id: item.id, field: 'prompt', value: generatedPrompt }
+                    const res = await fetch(`${backendUrl}/api/generate-image-prompt`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            scene_lines: sceneText,
+                            character_description: charData.enabled ? charData.text : null,
+                            animation_style: styleData.enabled ? styleData.text : null
+                        }),
+                        signal // Pass the abort signal
                     });
-                    previousContext = generatedPrompt;
-                    scenesProcessed++;
+
+                    if (!res.ok) {
+                        console.error(`Failed to generate prompt for scene ${item.id}`);
+                        continue;
+                    }
+
+                    const data = await res.json();
+                    if (data.prompt) {
+                        dispatch({
+                            type: 'UPDATE_SCENE_META',
+                            payload: { id: item.id, field: 'prompt', value: data.prompt }
+                        });
+                        scenesProcessed++;
+                    }
+                } catch (e) {
+                    if (e.name === 'AbortError') {
+                        // Silently ignore aborts
+                    } else {
+                        console.error(e);
+                    }
+                } finally {
+                    dispatch({ type: 'UPDATE_SCENE_META', payload: { id: item.id, field: 'promptGenStatus', value: null } });
                 }
 
+                if (signal.aborted) break;
                 await new Promise(resolve => setTimeout(resolve, 300));
             }
 
-            toast.dismiss(toastId);
-            if (scenesProcessed > 0 || scenesSkipped > 0) {
-                toast.success(`Done! Generated: ${scenesProcessed}, Skipped: ${scenesSkipped}`);
+            if (signal.aborted) {
+                toast.success(`Stopped. Generated: ${scenesProcessed}`, { id: toastId });
             } else {
-                toast.error("No scenes found to process");
+                toast.success(`Done! Generated: ${scenesProcessed}, Skipped: ${scenesSkipped}`, { id: toastId });
             }
 
         } catch (e) {
             console.error(e);
             toast.error(e.message || "Prompt generation failed", { id: toastId });
         } finally {
+            scenesToProcess.forEach(scene => {
+                dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'promptGenStatus', value: null } });
+            });
             setIsGeneratingPrompts(false);
+            promptAbortControllerRef.current = null;
+        }
+    };
+
+    // --- 3. GENERATE ALL IMAGES (QUEUE SYSTEM) ---
+    const handleGenerateAllImages = async () => {
+        if (isGeneratingAllImages) {
+            if (imageAbortControllerRef.current) {
+                imageAbortControllerRef.current.abort();
+            }
+            return;
+        }
+
+        const sessionData = getStorageItem('sb_global_session_key');
+        if (!sessionData.text) {
+            return toast.error("Session Key is missing. Please add it in Global Settings.");
+        }
+
+        setIsGeneratingAllImages(true);
+        const toastId = toast.loading("Starting bulk image generation...");
+
+        imageAbortControllerRef.current = new AbortController();
+        const signal = imageAbortControllerRef.current.signal;
+
+        const scenesToProcess = [];
+
+        try {
+            let skippedHasImage = 0;
+            let skippedNoPrompt = 0;
+
+            for (let i = 0; i < state.items.length; i++) {
+                const item = state.items[i];
+                if (item.type !== 'scene') continue;
+
+                if (item.image) {
+                    skippedHasImage++;
+                    continue;
+                }
+
+                if (!item.prompt || !item.prompt.trim()) {
+                    skippedNoPrompt++;
+                    continue;
+                }
+
+                scenesToProcess.push({ ...item, displayIndex: i + 1 });
+            }
+
+            if (scenesToProcess.length === 0) {
+                toast.success(`Done! Skipped ${skippedHasImage} (has image), ${skippedNoPrompt} (no prompt).`, { id: toastId });
+                setIsGeneratingAllImages(false);
+                return;
+            }
+
+            scenesToProcess.forEach(scene => {
+                dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'imageGenStatus', value: 'queued' } });
+            });
+
+            let generatedCount = 0;
+            let hasError = false;
+            const activePromises = new Set();
+
+            for (let i = 0; i < scenesToProcess.length; i++) {
+                if (signal.aborted || hasError) break;
+
+                while (activePromises.size >= 4) {
+                    await Promise.race(activePromises);
+                }
+
+                if (signal.aborted || hasError) break;
+
+                if (i > 0) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+
+                if (signal.aborted || hasError) break;
+
+                const scene = scenesToProcess[i];
+                toast.loading(`Processing ${generatedCount + activePromises.size + 1} of ${scenesToProcess.length}...`, { id: toastId });
+
+                const promise = (async () => {
+                    try {
+                        dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'imageGenStatus', value: 'generating' } });
+
+                        const res = await fetch(`${backendUrl}/api/generate-image`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                prompt: scene.prompt,
+                                session_token: sessionData.text,
+                            }),
+                            signal
+                        });
+
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            if (err.refresh) refreshSessionKey();
+                            throw new Error(err.message || "Failed to generate image");
+                        }
+
+                        const data = await res.json();
+                        let returnedImage = null;
+                        if (data?.imagePanels?.[0]?.generatedImages?.[0]?.encodedImage) {
+                            const rawBase64 = data.imagePanels[0].generatedImages[0].encodedImage;
+                            returnedImage = rawBase64.startsWith('data:') ? rawBase64 : `data:image/jpeg;base64,${rawBase64}`;
+                        }
+
+                        if (returnedImage) {
+                            dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'image', value: returnedImage } });
+                            generatedCount++;
+                        } else {
+                            throw new Error("No image data returned from server");
+                        }
+
+                    } catch (err) {
+                        if (err.name === 'AbortError') {
+                            // Ignored
+                        } else {
+                            console.error(`Failed to generate image for scene ${scene.id}:`, err);
+                            hasError = true;
+                            toast.error(`Error on Scene ${scene.displayIndex}: ${err.message}`);
+
+                            if (imageAbortControllerRef.current) {
+                                imageAbortControllerRef.current.abort();
+                            }
+                        }
+                    } finally {
+                        dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'imageGenStatus', value: null } });
+                    }
+                })();
+
+                activePromises.add(promise);
+                promise.finally(() => activePromises.delete(promise));
+            }
+
+            await Promise.all(activePromises);
+
+            if (signal.aborted && !hasError) {
+                toast.success(`Stopped. Generated: ${generatedCount}`, { id: toastId });
+            } else if (hasError) {
+                toast.error(`Queue halted due to error. Generated: ${generatedCount}`, { id: toastId });
+            } else {
+                toast.success(`Done! Generated: ${generatedCount} | Skipped: ${skippedHasImage + skippedNoPrompt}`, { id: toastId });
+            }
+
+        } catch (e) {
+            console.error(e);
+            toast.error(e.message || "Bulk generation failed", { id: toastId });
+        } finally {
+            scenesToProcess.forEach(scene => {
+                dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'imageGenStatus', value: null } });
+            });
+            setIsGeneratingAllImages(false);
+            imageAbortControllerRef.current = null;
         }
     };
 
     return (
-        <div className="flex items-center gap-2 mr-2">
+        <div className="flex flex-wrap items-center gap-2 mr-2">
             <Button variant="outline" size="sm" onClick={handleGenerateScenes} disabled={isGeneratingScenes} className="h-9 text-sm px-3 text-slate-700 hover:text-purple-600 hover:bg-purple-50">
                 {isGeneratingScenes ? <FaSpinner className="mr-2 animate-spin" /> : <FaMagic className="mr-2" />}
                 Generate Scenes
             </Button>
-            <Button variant="outline" size="sm" onClick={handleGenerateImagePrompts} disabled={isGeneratingPrompts} className="h-9 text-sm px-3 text-slate-700 hover:text-pink-600 hover:bg-pink-50">
-                {isGeneratingPrompts ? <FaSpinner className="mr-2 animate-spin" /> : <FaPenFancy className="mr-2" />}
-                Generate Image Prompts
-            </Button>
+
+            {!isGeneratingPrompts ? (
+                <Button variant="outline" size="sm" onClick={handleGenerateImagePrompts} className="h-9 text-sm px-3 text-slate-700 hover:text-pink-600 hover:bg-pink-50">
+                    <FaPenFancy className="mr-2" /> Generate Prompts
+                </Button>
+            ) : (
+                <Button variant="destructive" size="sm" onClick={handleGenerateImagePrompts} className="h-9 text-sm px-3 shadow-md border border-red-700 transition-all">
+                    <FaStop className="mr-2 animate-pulse" /> Stop Generating
+                </Button>
+            )}
+
+            {!isGeneratingAllImages ? (
+                <Button variant="outline" size="sm" onClick={handleGenerateAllImages} className="h-9 text-sm px-3 text-slate-700 hover:text-blue-600 hover:bg-blue-50">
+                    <FaImages className="mr-2" /> Generate Images
+                </Button>
+            ) : (
+                <Button variant="destructive" size="sm" onClick={handleGenerateAllImages} className="h-9 text-sm px-3 shadow-md border border-red-700 transition-all">
+                    <FaStop className="mr-2 animate-pulse" /> Stop Generating
+                </Button>
+            )}
         </div>
     );
 };

@@ -5,6 +5,7 @@ import FileMenu from './topbar/FileMenu';
 import StatsDisplay from './topbar/StatsDisplay';
 import GeneratorControls from './topbar/GeneratorControls';
 import { GlobalSettings } from './topbar/GlobalSettings';
+import SuperMenu from './topbar/SuperMenu';
 
 const TopBar = () => {
     const { state, dispatch } = useStoryBoard();
@@ -13,7 +14,7 @@ const TopBar = () => {
         <header className="sticky top-0 z-50 w-full bg-white border-b border-slate-200 shadow-sm">
             <div className="flex flex-col gap-3 px-6 py-3">
 
-                {/* ROW 1: Title & File Menu + Settings */}
+                {/* ROW 1: Title & File Menu + Settings + SuperMenu */}
                 <div className="flex flex-wrap items-center justify-between gap-y-3">
                     <div className="flex items-center gap-4">
                         <img src="/logo.svg" alt="Logo" className="h-9 w-9" />
@@ -27,7 +28,9 @@ const TopBar = () => {
 
                     <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                         <FileMenu />
+                        <div className="h-6 w-px bg-slate-200 mx-1 hidden sm:block"></div> {/* Subtle divider */}
                         <GlobalSettings />
+                        <SuperMenu />
                     </div>
                 </div>
 
