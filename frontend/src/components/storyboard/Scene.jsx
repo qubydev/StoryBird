@@ -18,12 +18,9 @@ const Scene = ({ scene, index }) => {
     const [lastGeneratedPrompt, setLastGeneratedPrompt] = useState(scene.image ? scene.prompt : null);
     const { start, end } = getSceneDuration(scene.sentences);
 
-    // Global loading tracking
     const isGlobalGenerating = scene.imageGenStatus === 'generating';
     const isGlobalQueued = scene.imageGenStatus === 'queued';
     const isBusy = isGeneratingImg || isGlobalGenerating || isGlobalQueued;
-
-    // Prompt button specific loading tracking
     const isPromptBusy = isGeneratingTxt || scene.promptGenStatus === 'generating';
 
     useEffect(() => {
@@ -73,7 +70,6 @@ const Scene = ({ scene, index }) => {
 
     const handleGenerateImage = async () => {
         if (!scene.prompt) return toast.error("Enter a prompt first");
-
         const sessionData = getStorageItem('sb_global_session_key');
         if (!sessionData.text) {
             return toast.error("Session Key is missing. Please add it first.");
@@ -81,7 +77,6 @@ const Scene = ({ scene, index }) => {
 
         setIsGeneratingImg(true);
         const toastId = toast.loading("Generating image...");
-
         try {
             const backendUrl = import.meta.env.VITE_BACKEND_URL;
             const res = await fetch(`${backendUrl}/api/generate-image`, {
@@ -92,7 +87,6 @@ const Scene = ({ scene, index }) => {
                     session_token: sessionData.text,
                 })
             });
-
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 if (err.refresh) {
@@ -102,7 +96,6 @@ const Scene = ({ scene, index }) => {
             }
 
             const data = await res.json();
-
             let returnedImage = null;
             if (data?.imagePanels?.[0]?.generatedImages?.[0]?.encodedImage) {
                 const rawBase64 = data.imagePanels[0].generatedImages[0].encodedImage;
@@ -126,36 +119,30 @@ const Scene = ({ scene, index }) => {
     };
 
     const handleGeneratePrompt = async () => {
-        const charData = getStorageItem('sb_global_character');
-        const styleData = getStorageItem('sb_global_style');
+        const instData = getStorageItem('sb_global_instructions');
 
-        if (charData.enabled && (!charData.text || !charData.text.trim())) {
-            return toast.error("Character is enabled but empty. Please disable it or add a description.");
-        }
-        if (styleData.enabled && (!styleData.text || !styleData.text.trim())) {
-            return toast.error("Style is enabled but empty. Please disable it or add a description.");
-        }
+        const sceneIndex = state.items.findIndex(i => i.id === scene.id);
+        const previousScenes = state.items.slice(0, sceneIndex).filter(i => i.type === 'scene');
+        const previousScene = previousScenes.length > 0 ? previousScenes[previousScenes.length - 1] : null;
+        const previousPrompt = previousScene ? previousScene.prompt : null;
 
         setIsGeneratingTxt(true);
         const toastId = toast.loading("Generating prompt...");
-
         try {
             const sceneText = scene.sentences.map(s => s.text).join(' ').trim();
             if (!sceneText) throw new Error("Scene has no text");
 
             const backendUrl = import.meta.env.VITE_BACKEND_URL;
-
-            // Updated schema
             const res = await fetch(`${backendUrl}/api/generate-image-prompt`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    title: state.title || 'Untitled',
                     scene_lines: sceneText,
-                    character_description: charData.enabled ? charData.text : null,
-                    animation_style: styleData.enabled ? styleData.text : null
+                    instructions: instData.text ? instData.text : null,
+                    previous_prompt: previousPrompt
                 })
             });
-
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 throw new Error(err.message || "Failed to generate");

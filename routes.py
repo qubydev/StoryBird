@@ -9,9 +9,10 @@ from enum import Enum
 router = APIRouter()
 
 class ImagePromptRequest(BaseModel):
+    title: str
     scene_lines: str
-    character_description: str | None = None
-    animation_style: str | None = None
+    instructions: str | None = None
+    previous_prompt: str | None = None
 
 class GenerateScenesRequest(BaseModel):
     title: str
@@ -31,9 +32,10 @@ class GenerateImageRequest(BaseModel):
 @router.post("/generate-image-prompt")
 async def _generate_image_prompt(request: ImagePromptRequest):
     prompt = generate_image_prompt(
+        title=request.title,
         scene_lines=request.scene_lines,
-        character_description=request.character_description,
-        animation_style=request.animation_style
+        instructions=request.instructions,
+        previous_prompt=request.previous_prompt
     )
     return JSONResponse({"prompt": prompt})
 

@@ -8,18 +8,14 @@ import { getStorageItem, refreshSessionKey } from '../../../lib/storyboard-utils
 const GeneratorControls = () => {
     const { state, dispatch } = useStoryBoard();
     const [isGeneratingScenes, setIsGeneratingScenes] = useState(false);
-
-    // Tracking states
     const [isGeneratingPrompts, setIsGeneratingPrompts] = useState(false);
     const [isGeneratingAllImages, setIsGeneratingAllImages] = useState(false);
 
-    // Abort controllers for stopping processes
     const promptAbortControllerRef = useRef(null);
     const imageAbortControllerRef = useRef(null);
 
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
 
-    // --- 1. GENERATE SCENES ---
     const handleGenerateScenes = async () => {
         setIsGeneratingScenes(true);
         const toastId = toast.loading("Analyzing script...");
@@ -30,7 +26,6 @@ const GeneratorControls = () => {
                 if (item.type === 'sentence') allSentences.push(item);
                 else if (item.type === 'scene') allSentences.push(...item.sentences);
             });
-
             if (allSentences.length === 0) throw new Error("No sentences found");
 
             const payload = allSentences.map(s => {
@@ -70,9 +65,7 @@ const GeneratorControls = () => {
         }
     };
 
-    // --- 2. GENERATE PROMPTS (WITH STOP ABILITY) ---
     const handleGenerateImagePrompts = async () => {
-        // If already running, abort the process
         if (isGeneratingPrompts) {
             if (promptAbortControllerRef.current) {
                 promptAbortControllerRef.current.abort();
@@ -80,17 +73,7 @@ const GeneratorControls = () => {
             return;
         }
 
-        const charData = getStorageItem('sb_global_character');
-        const styleData = getStorageItem('sb_global_style');
-
-        if (charData.enabled && (!charData.text || !charData.text.trim())) {
-            toast.error("Character is enabled but empty. Please disable it or add a description.");
-            return;
-        }
-        if (styleData.enabled && (!styleData.text || !styleData.text.trim())) {
-            toast.error("Style is enabled but empty. Please disable it or add a description.");
-            return;
-        }
+        const instData = getStorageItem('sb_global_instructions');
 
         setIsGeneratingPrompts(true);
         const toastId = toast.loading("Generating image prompts...");
@@ -99,18 +82,18 @@ const GeneratorControls = () => {
         const signal = promptAbortControllerRef.current.signal;
 
         const scenesToProcess = state.items.filter(item => item.type === 'scene');
-
         try {
             let scenesProcessed = 0;
             let scenesSkipped = 0;
+            let lastPrompt = null;
 
             for (let i = 0; i < scenesToProcess.length; i++) {
                 if (signal.aborted) break;
-
                 const item = scenesToProcess[i];
 
                 if (item.prompt && item.prompt.trim().length > 0) {
                     scenesSkipped++;
+                    lastPrompt = item.prompt;
                     continue;
                 }
 
@@ -122,18 +105,17 @@ const GeneratorControls = () => {
 
                 try {
                     dispatch({ type: 'UPDATE_SCENE_META', payload: { id: item.id, field: 'promptGenStatus', value: 'generating' } });
-
                     const res = await fetch(`${backendUrl}/api/generate-image-prompt`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
+                            title: state.title || 'Untitled',
                             scene_lines: sceneText,
-                            character_description: charData.enabled ? charData.text : null,
-                            animation_style: styleData.enabled ? styleData.text : null
+                            instructions: instData.text ? instData.text : null,
+                            previous_prompt: lastPrompt
                         }),
-                        signal // Pass the abort signal
+                        signal
                     });
-
                     if (!res.ok) {
                         console.error(`Failed to generate prompt for scene ${item.id}`);
                         continue;
@@ -146,11 +128,10 @@ const GeneratorControls = () => {
                             payload: { id: item.id, field: 'prompt', value: data.prompt }
                         });
                         scenesProcessed++;
+                        lastPrompt = data.prompt;
                     }
                 } catch (e) {
-                    if (e.name === 'AbortError') {
-                        // Silently ignore aborts
-                    } else {
+                    if (e.name !== 'AbortError') {
                         console.error(e);
                     }
                 } finally {
@@ -179,7 +160,6 @@ const GeneratorControls = () => {
         }
     };
 
-    // --- 3. GENERATE ALL IMAGES (QUEUE SYSTEM) ---
     const handleGenerateAllImages = async () => {
         if (isGeneratingAllImages) {
             if (imageAbortControllerRef.current) {
@@ -231,29 +211,23 @@ const GeneratorControls = () => {
             scenesToProcess.forEach(scene => {
                 dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'imageGenStatus', value: 'queued' } });
             });
-
             let generatedCount = 0;
             let hasError = false;
             const activePromises = new Set();
-
             for (let i = 0; i < scenesToProcess.length; i++) {
                 if (signal.aborted || hasError) break;
-
                 while (activePromises.size >= 4) {
                     await Promise.race(activePromises);
                 }
 
                 if (signal.aborted || hasError) break;
-
                 if (i > 0) {
                     await new Promise(resolve => setTimeout(resolve, 100));
                 }
 
                 if (signal.aborted || hasError) break;
-
                 const scene = scenesToProcess[i];
                 toast.loading(`Processing ${generatedCount + activePromises.size + 1} of ${scenesToProcess.length}...`, { id: toastId });
-
                 const promise = (async () => {
                     try {
                         dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'imageGenStatus', value: 'generating' } });
@@ -289,9 +263,7 @@ const GeneratorControls = () => {
                         }
 
                     } catch (err) {
-                        if (err.name === 'AbortError') {
-                            // Ignored
-                        } else {
+                        if (err.name !== 'AbortError') {
                             console.error(`Failed to generate image for scene ${scene.id}:`, err);
                             hasError = true;
                             toast.error(`Error on Scene ${scene.displayIndex}: ${err.message}`);
@@ -310,7 +282,6 @@ const GeneratorControls = () => {
             }
 
             await Promise.all(activePromises);
-
             if (signal.aborted && !hasError) {
                 toast.success(`Stopped. Generated: ${generatedCount}`, { id: toastId });
             } else if (hasError) {
@@ -348,15 +319,16 @@ const GeneratorControls = () => {
                 </Button>
             )}
 
-            {!isGeneratingAllImages ? (
-                <Button variant="outline" size="sm" onClick={handleGenerateAllImages} className="h-9 text-sm px-3 text-slate-700 hover:text-blue-600 hover:bg-blue-50">
-                    <FaImages className="mr-2" /> Generate Images
-                </Button>
-            ) : (
-                <Button variant="destructive" size="sm" onClick={handleGenerateAllImages} className="h-9 text-sm px-3 shadow-md border border-red-700 transition-all">
-                    <FaStop className="mr-2 animate-pulse" /> Stop Generating
-                </Button>
-            )}
+            {!isGeneratingAllImages ?
+                (
+                    <Button variant="outline" size="sm" onClick={handleGenerateAllImages} className="h-9 text-sm px-3 text-slate-700 hover:text-blue-600 hover:bg-blue-50">
+                        <FaImages className="mr-2" /> Generate Images
+                    </Button>
+                ) : (
+                    <Button variant="destructive" size="sm" onClick={handleGenerateAllImages} className="h-9 text-sm px-3 shadow-md border border-red-700 transition-all">
+                        <FaStop className="mr-2 animate-pulse" /> Stop Generating
+                    </Button>
+                )}
         </div>
     );
 };

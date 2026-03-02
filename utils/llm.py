@@ -5,7 +5,6 @@ from langchain_groq import ChatGroq
 import os
 from pydantic import BaseModel, Field
 
-# Definations 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 model = ChatGroq(
@@ -13,37 +12,37 @@ model = ChatGroq(
     model="llama-3.3-70b-versatile"
 )
 
-# Models
 class ScenesWithIndexGroups(BaseModel):
     scenes: list[list[int]] = Field(..., description="list of list of line indices, groupped into scenes.")
 
 class SceneImagePrompt(BaseModel):
     prompt: str = Field(..., description="A descriptive prompt for generating an image based on the scene lines.")
 
+GENERATE_SCENES_SYSTEM = """You are a creative movie director working with an AI video generation pipeline. Lines from a script with their indices are provided to you. Your task is to group these lines into short scenes, where each scene will be represented by a single image in the video.
 
-# Prompts
-GENERATE_SCENES_SYSTEM = """You are a visual planner for an AI video generation pipeline. Lines from a script with their indices are provided to you. Your task is to group these lines into short scenes.
+CRITICAL CONSTRAINTS:
+- ONE SCENE = ONE IMAGE. If the visual changes even slightly, it MUST be a new scene.
+- KEEP SCENES EXTREMELY SHORT. Most scenes should be 1 or 2 lines. 3 lines is the absolute maximum if they describe the exact same static visual.
+- Lines that describe different actions, different subjects, or a passage of time CANNOT be in the same scene.
 
-CRITICAL CONSTRAINT: ONE SCENE = ONE IMAGE
-- Every scene you create will be represented by ONE single image in the video.
-- Therefore, you CANNOT group lines together which does not fit into a single scene image.
-- Because of this, most scenes will probably contain 1 to 2 lines.
+EXAMPLE OF DESIRED PACING:
+Lines:
+0: "Paris, 1925."
+1: "The city is recovering from the Great War."
+2: "And the Eiffel Tower is rusting."
+3: "Victor Lustig sits in a luxurious hotel suite."
+4: "He reads an article about the tower's high maintenance costs."
+5: "A devious smile crosses his face."
+6: "He has found his next mark."
+7: "The French Government."
+
+Expected Output:
+[[0, 1], [2], [3, 4], [5], [6, 7]]
 
 RULES:
-- Return ONLY a valid JSON list of lists of line indices (e.g., [[0], [1, 2], [3], [4]]). No other text, formatting, or markdown blocks.
+- Return ONLY a valid JSON list of lists of line indices.
+- Do not include any other text, formatting, or markdown blocks.
 - Do not miss or repeat any index.
-
-EXAMPLE OF EXPECTED PACING:
-Text: 
-0. The neon signs of Neo-Tokyo flicker in the heavy rain.
-1. A cyber-thief drops silently from the glass rooftop.
-2. She lands perfectly balanced on the rusted fire escape.
-3. A security drone sweeps its red targeting laser across the dark alley.
-4. She presses her back flat against the cold brick wall to hide.
-5. The drone hovers for a second before flying away.
-
-Correct Output for Example:
-[[0], [1, 2], [3], [4], [5]]
 """
 
 GENERATE_SCENES_USER = """Please generate scenes for the following script:
@@ -54,35 +53,35 @@ LINES:
 {formatted_lines}
 """
 
-# 2D animation style focused
-GENERATE_IMAGE_PROMPT_SYSTEM = """You are a creative AI image prompt engineer specializing in 2D animation style. Some lines from a animation script and some other optional details are provided to you, your task is to generate a descriptive image-generation prompt that represents the scene following the given details. This prompt will later be used to generate an image using a text-to-image AI model.
+GENERATE_IMAGE_PROMPT_SYSTEM = """You are a creative AI image prompt engineer. Some lines from a script, its title, and optional instructions are provided to you. Your task is to generate a descriptive image-generation prompt that represents the scene while strictly following the provided instructions. This prompt will later be used to generate an image using a text-to-image AI model.
 
-POSSIBLE INPUTS:
-- **SCENE LINES** (REQUIRED): A few lines from the script that describe the scene.
-- **CHARACTER DESCRIPTION** (OPTIONAL): A visual description of the main character(s) in the scene.
-- **ANIMATION STYLE** (OPTIONAL): A specific 2D animation style to apply.
+INPUTS:
+- **TITLE** (REQUIRED): The title of the script.
+- **SCENE LINES** (REQUIRED): A few lines from the script that describe the current scene.
+- **PREVIOUS SCENE PROMPT** (OPTIONAL): The prompt of the previous scene. Use this to maintain visual continuity and consistent character/environment details.
+- **INSTRUCTIONS** (OPTIONAL): Some guidelines for style, character details, atmosphere, or any other constraints.
 
 RULES:
 - Be creative and descriptive in your prompt to ensure the generated image captures the essence of the scene.
-- It is not mendatory to show the character in the scene, you may or may not contain the character based on the provided inputs.
-- Do not add any instruction to add any type of caption text in the output image.
+- Ensure visual consistency with the PREVIOUS SCENE PROMPT if it is provided.
+- If INSTRUCTIONS are provided, they must be heavily prioritized and incorporated into the final prompt.
+- You MUST NOT have instructions to add any kind of caption or overlay text in the output image prompt.
 """
 
 def GENERATE_IMAGE_PROMPT_USER(
+        title: str,
         scene_lines: str,
-        character_description: str | None = None,
-        animation_style: str | None = None,
+        instructions: str | None = None,
+        previous_prompt: str | None = None,
     ) -> str:
-    prompt = f"Generate an image prompt using the following inputs:\n\n**SCENE LINES:**\n{scene_lines}"
-    if character_description:
-        prompt += f"\n\n**CHARACTER DESCRIPTION:**\n{character_description}"
-    if animation_style:
-        prompt += f"\n\n**ANIMATION STYLE:**\n{animation_style}"
+    prompt = f"Generate an image prompt using the following inputs:\n\n**TITLE:**\n{title}\n\n**SCENE LINES:**\n{scene_lines}"
+    if previous_prompt:
+        prompt += f"\n\n**PREVIOUS SCENE PROMPT:**\n{previous_prompt}"
+    if instructions:
+        prompt += f"\n\n**INSTRUCTIONS:**\n{instructions}"
     
     return prompt
 
-
-# Functions 
 def generate_scenes(title: str, lines: list[dict]) -> list[list[int]]:
     structured_model = model.with_structured_output(ScenesWithIndexGroups)
     formatted_lines = "\n".join([f"{i}: \"{line['text']}\"" for i, line in enumerate(lines)])
@@ -94,18 +93,19 @@ def generate_scenes(title: str, lines: list[dict]) -> list[list[int]]:
     return response.scenes
 
 def generate_image_prompt(
+        title: str,
         scene_lines: str,
-        character_description: str | None = None,
-        animation_style: str | None = None
+        instructions: str | None = None,
+        previous_prompt: str | None = None
     ) -> str:
     structured_model = model.with_structured_output(SceneImagePrompt)
     response = structured_model.invoke([
         {"role": "system", "content": GENERATE_IMAGE_PROMPT_SYSTEM},
         {"role": "user", "content": GENERATE_IMAGE_PROMPT_USER(
+            title=title,
             scene_lines=scene_lines,
-            character_description=character_description,
-            animation_style=animation_style
+            instructions=instructions,
+            previous_prompt=previous_prompt
         )}
     ])
     return response.prompt
-    
