@@ -2,10 +2,10 @@ from utils.redis_client import client as r_client
 import requests
 from fastapi import status
 
-
 WHISK_SESSION_TOKEN_KEY = "whisk:session_token"
 SESSION_URL = "https://labs.google/fx/api/auth/session"
 IMAGE_GENERATION_URL = "https://aisandbox-pa.googleapis.com/v1/whisk:generateImage"
+UPLOAD_IMAGE_URL = "https://labs.google/fx/api/trpc/backbone.uploadImage"
 REFRESH_STATUSES = [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN]
 
 
@@ -131,3 +131,60 @@ def generate_image(
         )
 
     return response.json()
+
+
+# --------------------------------
+# Image Upload
+# --------------------------------
+def upload_image(raw_bytes, session_token):
+    if not session_token:
+        raise WhiskError(
+            status.HTTP_400_BAD_REQUEST,
+            "Session token is required to upload image"
+        )
+    
+    if not raw_bytes:
+        raise WhiskError(
+            status.HTTP_400_BAD_REQUEST,
+            "Raw bytes are required to upload image"
+        )
+
+    headers = {
+        "Cookie": f"__Secure-next-auth.session-token={session_token}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "json": {
+            "uploadMediaInput": {
+                "mediaCategory": "MEDIA_CATEGORY_SUBJECT",
+                "rawBytes": raw_bytes
+            }
+        }
+    }
+    
+    try:
+        res = requests.post(UPLOAD_IMAGE_URL, json=payload, headers=headers)
+        res.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        raise WhiskError(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Upload request failed: {str(e)}"
+        )
+
+    try:
+        data = res.json()
+        media_id = data.get("result", {}).get("data", {}).get("json", {}).get("result", {}).get("uploadMediaGenerationId")
+        
+        if not media_id:
+            raise WhiskError(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Failed to retrieve uploadMediaGenerationId from external API"
+            )
+        
+        return {"uploadMediaGenerationId": media_id}
+    except ValueError:
+        raise WhiskError(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Invalid JSON response from upload API"
+        )

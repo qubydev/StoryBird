@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useStoryBoard } from '../../../context/StoryBoardContext';
 import { Button } from '@/components/ui/button';
-import { FaMagic, FaSpinner, FaPenFancy, FaImages, FaStop } from 'react-icons/fa';
+import { FaMagic, FaSpinner, FaPenFancy, FaImages, FaStop, FaUsers } from 'react-icons/fa';
 import toast from 'react-hot-toast';
 import { getStorageItem, refreshSessionKey } from '../../../lib/storyboard-utils';
 
@@ -10,11 +10,32 @@ const GeneratorControls = () => {
     const [isGeneratingScenes, setIsGeneratingScenes] = useState(false);
     const [isGeneratingPrompts, setIsGeneratingPrompts] = useState(false);
     const [isGeneratingAllImages, setIsGeneratingAllImages] = useState(false);
+    const [isDetectingChars, setIsDetectingChars] = useState(false);
 
     const promptAbortControllerRef = useRef(null);
     const imageAbortControllerRef = useRef(null);
 
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
+
+    const handleDetectCharacters = async () => {
+        setIsDetectingChars(true);
+        const toastId = toast.loading("Detecting characters from script...");
+        try {
+            await new Promise(res => setTimeout(res, 1500));
+
+            const mockCharacters = [
+                { id: `char_${Date.now().toString().slice(-6)}`, description: 'Main character, a suave con artist.', image: null, mediaId: null },
+                { id: `char_${(Date.now() + 1).toString().slice(-6)}`, description: 'The mark, a gullible scrap metal dealer.', image: null, mediaId: null }
+            ];
+
+            dispatch({ type: 'SET_CHARACTERS', payload: [...(state.characters || []), ...mockCharacters] });
+            toast.success("Characters detected!", { id: toastId });
+        } catch (err) {
+            toast.error("Failed to detect characters", { id: toastId });
+        } finally {
+            setIsDetectingChars(false);
+        }
+    };
 
     const handleGenerateScenes = async () => {
         setIsGeneratingScenes(true);
@@ -304,6 +325,12 @@ const GeneratorControls = () => {
 
     return (
         <div className="flex flex-wrap items-center gap-2 mr-2">
+
+            <Button variant="outline" size="sm" onClick={handleDetectCharacters} disabled={isDetectingChars} className="h-9 text-sm px-3 text-slate-700 hover:text-emerald-600 hover:bg-emerald-50">
+                {isDetectingChars ? <FaSpinner className="mr-2 animate-spin" /> : <FaUsers className="mr-2" />}
+                Detect Characters
+            </Button>
+
             <Button variant="outline" size="sm" onClick={handleGenerateScenes} disabled={isGeneratingScenes} className="h-9 text-sm px-3 text-slate-700 hover:text-purple-600 hover:bg-purple-50">
                 {isGeneratingScenes ? <FaSpinner className="mr-2 animate-spin" /> : <FaMagic className="mr-2" />}
                 Generate Scenes

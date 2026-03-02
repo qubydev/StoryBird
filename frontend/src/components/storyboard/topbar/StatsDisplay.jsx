@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { useStoryBoard } from '../../../context/StoryBoardContext';
 import { Button } from '@/components/ui/button';
-import { FaObjectGroup, FaTrash, FaTimes, FaLayerGroup, FaFont, FaClock } from 'react-icons/fa';
+import { FaObjectGroup, FaTrash, FaTimes, FaLayerGroup, FaFont, FaClock, FaCompressAlt } from 'react-icons/fa';
 import { calculateStats, formatDuration, isSelectionConsecutive } from '../../../lib/storyboard-utils';
 import toast from 'react-hot-toast';
 
@@ -13,19 +13,35 @@ const StatsDisplay = () => {
     const handleGroup = () => {
         const selectedItems = state.items.filter(i => selection.includes(i.id));
 
-        // 1. Validate: Only sentences can be grouped
         if (selectedItems.some(i => i.type !== 'sentence')) {
             return toast.error("Can only group standalone sentences.");
         }
 
-        // 2. Validate: Must be consecutive
         if (!isSelectionConsecutive(state.items, selection)) {
             return toast.error("Please select consecutive sentences to group.");
         }
 
-        // 3. Dispatch and Success
         dispatch({ type: 'GROUP_SELECTED' });
         toast.success("Created Scene");
+    };
+
+    const handleMerge = () => {
+        const selectedItems = state.items.filter(i => selection.includes(i.id));
+
+        if (selectedItems.some(i => i.type !== 'sentence')) {
+            return toast.error("Can only merge standalone sentences.");
+        }
+
+        if (selectedItems.length < 2) {
+            return toast.error("Select at least 2 sentences to merge.");
+        }
+
+        if (!isSelectionConsecutive(state.items, selection)) {
+            return toast.error("Please select consecutive sentences to merge.");
+        }
+
+        dispatch({ type: 'MERGE_SELECTED' });
+        toast.success("Sentences merged");
     };
 
     const handleDeleteSelection = () => {
@@ -43,6 +59,11 @@ const StatsDisplay = () => {
                 <Button size="sm" onClick={handleGroup} className="h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white shadow-sm">
                     <FaObjectGroup className="mr-2" /> Group ({selection.length})
                 </Button>
+
+                <Button size="sm" onClick={handleMerge} className="h-8 text-xs bg-purple-600 hover:bg-purple-700 text-white shadow-sm">
+                    <FaCompressAlt className="mr-2" /> Merge ({selection.length})
+                </Button>
+
                 <Button size="sm" variant="outline" onClick={handleDeleteSelection} className="h-8 text-xs text-red-600 hover:bg-red-50 border-red-200">
                     <FaTrash className="mr-2" /> Delete
                 </Button>

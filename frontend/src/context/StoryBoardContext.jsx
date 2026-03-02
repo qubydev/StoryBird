@@ -4,7 +4,6 @@ import toast from 'react-hot-toast';
 
 const StoryBoardContext = createContext();
 
-// Helper to prevent frozen loading states if user refreshes mid-generation
 const cleanPayloadItems = (payloadItems) => {
     if (!payloadItems || !Array.isArray(payloadItems)) return [];
     return payloadItems.map(item => {
@@ -25,6 +24,7 @@ const reducer = (state, action) => {
                 ...getInitialData(),
                 ...action.payload,
                 items: cleanPayloadItems(action.payload?.items),
+                characters: action.payload?.characters || [],
                 isDirty: false,
                 selection: action.payload?.selection || []
             };
@@ -34,14 +34,53 @@ const reducer = (state, action) => {
                 ...getInitialData(),
                 ...action.payload,
                 items: cleanPayloadItems(action.payload?.items),
+                characters: action.payload?.characters || [],
                 isDirty: true,
                 selection: []
             };
 
         case 'CLEAR_BOARD':
-            return { ...getInitialData(), isDirty: true };
+            return { ...getInitialData(), characters: [], isDirty: true };
 
-        // --- NEW BULK CLEAN ACTIONS ---
+        // --- CHARACTER ACTIONS ---
+        case 'SET_CHARACTERS':
+            return { ...state, characters: action.payload, isDirty: true };
+
+        case 'ADD_CHARACTER': {
+            const rawId = String(generateId());
+            const shortId = rawId.length > 6 ? rawId.substring(rawId.length - 6) : rawId;
+
+            const newChar = {
+                id: `char_${shortId}`,
+                description: '',
+                image: null,
+                mediaId: null
+            };
+
+            return {
+                ...state,
+                characters: [...(state.characters || []), newChar],
+                isDirty: true
+            };
+        }
+
+        case 'UPDATE_CHARACTER':
+            return {
+                ...state,
+                characters: (state.characters || []).map(c =>
+                    c.id === action.payload.id ? { ...c, ...action.payload.updates } : c
+                ),
+                isDirty: true
+            };
+
+        case 'DELETE_CHARACTER':
+            return {
+                ...state,
+                characters: (state.characters || []).filter(c => c.id !== action.payload),
+                isDirty: true
+            };
+        // -------------------------
+
         case 'CLEAN_ALL_IMAGES':
             return {
                 ...state,
@@ -59,7 +98,6 @@ const reducer = (state, action) => {
                 ),
                 isDirty: true
             };
-        // ------------------------------
 
         case 'UPDATE_TITLE':
             return { ...state, title: action.payload, isDirty: true };
@@ -67,6 +105,7 @@ const reducer = (state, action) => {
         case 'TOGGLE_SELECTION': {
             const id = action.payload;
             const isSelected = currentSelection.includes(id);
+
             return {
                 ...state,
                 selection: isSelected
@@ -126,6 +165,39 @@ const reducer = (state, action) => {
             return { ...state, items: newItems, selection: [], isDirty: true };
         }
 
+        case 'MERGE_SELECTED': {
+            const selectedIndices = [];
+            state.items.forEach((item, index) => {
+                if (currentSelection.includes(item.id)) selectedIndices.push(index);
+            });
+
+            if (selectedIndices.length <= 1) return state;
+
+            for (let i = 1; i < selectedIndices.length; i++) {
+                if (selectedIndices[i] !== selectedIndices[i - 1] + 1) return state;
+            }
+
+            const selectedItems = selectedIndices.map(idx => state.items[idx]);
+            if (selectedItems.some(i => i.type !== 'sentence')) return state;
+
+            const mergedText = selectedItems.map(i => i.text).filter(Boolean).join(' ');
+            const mergedStart = Math.min(...selectedItems.map(i => i.start));
+            const mergedEnd = Math.max(...selectedItems.map(i => i.end));
+
+            const mergedSentence = {
+                type: 'sentence',
+                id: generateId(),
+                text: mergedText,
+                start: mergedStart,
+                end: mergedEnd
+            };
+
+            const newItems = [...state.items];
+            newItems.splice(selectedIndices[0], selectedIndices.length, mergedSentence);
+
+            return { ...state, items: newItems, selection: [], isDirty: true };
+        }
+
         case 'APPLY_AUTO_GROUPING': {
             const groups = action.payload;
             const allSentences = [];
@@ -156,6 +228,7 @@ const reducer = (state, action) => {
         case 'UNGROUP_SCENE': {
             const sceneId = action.payload;
             const sceneIndex = state.items.findIndex(i => i.id === sceneId);
+
             if (sceneIndex === -1) return state;
 
             const scene = state.items[sceneIndex];
@@ -191,6 +264,7 @@ const reducer = (state, action) => {
             const copy = duplicateSceneData(state.items[index]);
             const newItems = [...state.items];
             newItems.splice(index + 1, 0, copy);
+
             return { ...state, items: newItems, isDirty: true };
         }
 
@@ -253,6 +327,7 @@ const reducer = (state, action) => {
                 }
                 return item;
             };
+
             return { ...state, items: state.items.map(updateItem), isDirty: true };
         }
 
@@ -264,6 +339,7 @@ const reducer = (state, action) => {
                 start: s.start,
                 end: s.end
             }));
+
             return { ...state, items: newItems, selection: [], isDirty: true };
         }
 
@@ -292,10 +368,12 @@ export const StoryBoardProvider = ({ children }) => {
 
     useEffect(() => {
         if (!state.isDirty) return;
+
         const handler = setTimeout(async () => {
             await saveToStorage(state);
             dispatch({ type: 'MARK_SAVED' });
         }, 500);
+
         return () => clearTimeout(handler);
     }, [state]);
 

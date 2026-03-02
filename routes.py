@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from utils.llm import generate_scenes, generate_image_prompt
-from utils.whisk import generate_image
+from utils.whisk import generate_image, upload_image, WhiskError
 from typing import Literal
 from enum import Enum
 
@@ -29,6 +29,10 @@ class GenerateImageRequest(BaseModel):
     model: Literal["IMAGEN_3_5"] = "IMAGEN_3_5"
     session_token: str
 
+class UploadImageRequest(BaseModel):
+    rawBytes: str
+    session_token: str
+
 @router.post("/generate-image-prompt")
 async def _generate_image_prompt(request: ImagePromptRequest):
     prompt = generate_image_prompt(
@@ -46,14 +50,28 @@ async def _generate_scenes(request: GenerateScenesRequest):
 
 @router.post("/generate-image")
 async def _generate_image(request: GenerateImageRequest):
-    data = generate_image(
-        prompt=request.prompt,
-        aspect_ratio=request.aspect_ratio.value,
-        model=request.model,
-        session_token=request.session_token
-    )
-    return JSONResponse(data)
+    try:
+        data = generate_image(
+            prompt=request.prompt,
+            aspect_ratio=request.aspect_ratio.value,
+            model=request.model,
+            session_token=request.session_token
+        )
+        return JSONResponse(data)
+    except WhiskError as e:
+        return JSONResponse({"error": e.message, "refresh": e.refresh}, status_code=e.status_code)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-@router.post("/err-check")
-async def _err_check(body: dict):
-    return JSONResponse({"received": body})
+@router.post("/upload-character-image")
+async def _upload_character_image(request: UploadImageRequest):
+    try:
+        data = upload_image(
+            raw_bytes=request.rawBytes,
+            session_token=request.session_token
+        )
+        return JSONResponse(data)
+    except WhiskError as e:
+        return JSONResponse({"error": e.message, "refresh": e.refresh}, status_code=e.status_code)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)

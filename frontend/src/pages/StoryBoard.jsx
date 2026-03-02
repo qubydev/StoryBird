@@ -3,6 +3,7 @@ import { StoryBoardProvider, useStoryBoard } from '../context/StoryBoardContext'
 import TopBar from '../components/storyboard/TopBar';
 import Scene from '../components/storyboard/Scene';
 import Sentence from '../components/storyboard/Sentence';
+import CharactersSection from '../components/storyboard/CharactersSection';
 import { Button } from '@/components/ui/button';
 import { FaPlus } from 'react-icons/fa';
 
@@ -36,7 +37,11 @@ const StoryBoardInner = () => {
             <TopBar />
 
             {/* CANVAS */}
-            <main className="max-w-4xl mx-auto mt-8 px-4 space-y-4">
+            <main className="max-w-5xl mx-auto mt-8 px-4 space-y-4">
+
+                {/* NEW CHARACTERS SECTION */}
+                <CharactersSection />
+
                 {state.items.length === 0 ? (
                     <div className="text-center py-10 text-slate-400 flex flex-col items-center gap-3">
                         <p className="text-sm">Start by adding items.</p>
@@ -92,5 +97,4 @@ const StoryBoard = () => (
         <StoryBoardInner />
     </StoryBoardProvider>
 );
-
 export default StoryBoard;
