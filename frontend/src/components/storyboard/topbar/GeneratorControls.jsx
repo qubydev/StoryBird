@@ -20,18 +20,56 @@ const GeneratorControls = () => {
     const handleDetectCharacters = async () => {
         setIsDetectingChars(true);
         const toastId = toast.loading("Detecting characters from script...");
+
         try {
-            await new Promise(res => setTimeout(res, 1500));
+            const allSentences = [];
+            state.items.forEach(item => {
+                if (item.type === 'sentence') allSentences.push(item);
+                else if (item.type === 'scene') allSentences.push(...item.sentences);
+            });
 
-            const mockCharacters = [
-                { id: `char_${Date.now().toString().slice(-6)}`, description: 'Main character, a suave con artist.', image: null, mediaId: null },
-                { id: `char_${(Date.now() + 1).toString().slice(-6)}`, description: 'The mark, a gullible scrap metal dealer.', image: null, mediaId: null }
-            ];
+            if (allSentences.length === 0) throw new Error("No sentences found to detect characters from.");
 
-            dispatch({ type: 'SET_CHARACTERS', payload: [...(state.characters || []), ...mockCharacters] });
-            toast.success("Characters detected!", { id: toastId });
+            const payload = allSentences.map(s => ({ text: s.text || '' }));
+
+            const res = await fetch(`${backendUrl}/api/detect-characters`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: state.title || 'Untitled',
+                    lines: payload
+                })
+            });
+
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.message || `Error ${res.status}`);
+            }
+
+            const data = await res.json();
+            const detected = data.characters || [];
+
+            if (detected.length === 0) {
+                toast.success("No characters detected.", { id: toastId });
+                return;
+            }
+
+            const newCharacters = detected.map(c => {
+                return {
+                    id: `char_${Date.now().toString().slice(-6) + Math.floor(Math.random() * 1000)}`,
+                    name: c.name || 'Unknown Character',
+                    description: c.description || '',
+                    image: null,
+                    mediaId: null
+                };
+            });
+
+            dispatch({ type: 'SET_CHARACTERS', payload: [...(state.characters || []), ...newCharacters] });
+            toast.success(`Detected ${newCharacters.length} characters!`, { id: toastId });
+
         } catch (err) {
-            toast.error("Failed to detect characters", { id: toastId });
+            console.error(err);
+            toast.error(err.message || "Failed to detect characters", { id: toastId });
         } finally {
             setIsDetectingChars(false);
         }
@@ -96,6 +134,12 @@ const GeneratorControls = () => {
 
         const instData = getStorageItem('sb_global_instructions');
 
+        const activeCharacters = (state.characters || []).filter(c => c.mediaId);
+        const charactersPayload = activeCharacters.length > 0 ? activeCharacters.map(c => ({
+            mediaId: c.mediaId,
+            description: c.description || 'character'
+        })) : null;
+
         setIsGeneratingPrompts(true);
         const toastId = toast.loading("Generating image prompts...");
 
@@ -126,6 +170,7 @@ const GeneratorControls = () => {
 
                 try {
                     dispatch({ type: 'UPDATE_SCENE_META', payload: { id: item.id, field: 'promptGenStatus', value: 'generating' } });
+
                     const res = await fetch(`${backendUrl}/api/generate-image-prompt`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -133,10 +178,12 @@ const GeneratorControls = () => {
                             title: state.title || 'Untitled',
                             scene_lines: sceneText,
                             instructions: instData.text ? instData.text : null,
-                            previous_prompt: lastPrompt
+                            previous_prompt: lastPrompt,
+                            characters: charactersPayload
                         }),
                         signal
                     });
+
                     if (!res.ok) {
                         console.error(`Failed to generate prompt for scene ${item.id}`);
                         continue;
@@ -146,7 +193,13 @@ const GeneratorControls = () => {
                     if (data.prompt) {
                         dispatch({
                             type: 'UPDATE_SCENE_META',
-                            payload: { id: item.id, field: 'prompt', value: data.prompt }
+                            payload: {
+                                id: item.id,
+                                updates: {
+                                    prompt: data.prompt,
+                                    subjectMediaIds: data.subject_media_ids || []
+                                }
+                            }
                         });
                         scenesProcessed++;
                         lastPrompt = data.prompt;
@@ -201,6 +254,7 @@ const GeneratorControls = () => {
         const signal = imageAbortControllerRef.current.signal;
 
         const scenesToProcess = [];
+        const allStateCharacters = state.characters || [];
 
         try {
             let skippedHasImage = 0;
@@ -249,17 +303,33 @@ const GeneratorControls = () => {
                 if (signal.aborted || hasError) break;
                 const scene = scenesToProcess[i];
                 toast.loading(`Processing ${generatedCount + activePromises.size + 1} of ${scenesToProcess.length}...`, { id: toastId });
+
                 const promise = (async () => {
                     try {
                         dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'imageGenStatus', value: 'generating' } });
 
-                        const res = await fetch(`${backendUrl}/api/generate-image`, {
+                        const subjectIds = scene.subjectMediaIds || [];
+                        let endpoint = `${backendUrl}/api/generate-image`;
+                        let reqBody = {
+                            prompt: scene.prompt,
+                            session_token: sessionData.text,
+                        };
+
+                        if (subjectIds.length > 0) {
+                            endpoint = `${backendUrl}/api/generate-image-chars`;
+                            reqBody.characters = subjectIds.map(id => {
+                                const c = allStateCharacters.find(ch => ch.mediaId === id);
+                                return {
+                                    mediaId: id,
+                                    description: c ? (c.description || 'Character') : 'Character'
+                                };
+                            });
+                        }
+
+                        const res = await fetch(endpoint, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                prompt: scene.prompt,
-                                session_token: sessionData.text,
-                            }),
+                            body: JSON.stringify(reqBody),
                             signal
                         });
 

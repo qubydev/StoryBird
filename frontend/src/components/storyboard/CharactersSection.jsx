@@ -7,9 +7,10 @@ import { FaUserPlus, FaTrash, FaUpload, FaUserCircle, FaEdit, FaSpinner } from '
 import { fileToBase64, getStorageItem } from '../../lib/storyboard-utils';
 import toast from 'react-hot-toast';
 
-const CharacterCard = ({ character, dispatch }) => {
+const CharacterCard = ({ character, index, dispatch }) => {
     const [isEditOpen, setIsEditOpen] = useState(false);
-    const [isUploading, setIsUploading] = useState(false);
+    const [isUploadingEdit, setIsUploadingEdit] = useState(false);
+    const [isUploadingDirect, setIsUploadingDirect] = useState(false);
     const [editState, setEditState] = useState({ description: '', image: null, mediaId: null });
 
     const handleOpenEdit = () => {
@@ -34,54 +35,92 @@ const CharacterCard = ({ character, dispatch }) => {
         toast.success("Character updated");
     };
 
-    const handleImageUpload = async (e) => {
+    // Shared upload logic for both direct and edit-dialog uploads
+    const performUpload = async (file) => {
+        const sessionData = getStorageItem('sb_global_session_key');
+        if (!sessionData || !sessionData.text) {
+            toast.error("Session Key is missing. Please add it in Global Settings.");
+            return null;
+        }
+
+        const base64 = await fileToBase64(file);
+        const backendUrl = import.meta.env.VITE_BACKEND_URL;
+
+        const res = await fetch(`${backendUrl}/api/upload-character-image`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                rawBytes: base64,
+                session_token: sessionData.text
+            })
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || err.message || "Upload failed");
+        }
+
+        const data = await res.json();
+
+        if (!data.uploadMediaGenerationId) {
+            throw new Error("Missing uploadMediaGenerationId in response");
+        }
+
+        return { base64, mediaId: data.uploadMediaGenerationId };
+    };
+
+    // Handler for Direct Upload from the main card
+    const handleDirectUpload = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
-        const sessionData = getStorageItem('sb_global_session_key');
-        if (!sessionData || !sessionData.text) {
-            return toast.error("Session Key is missing. Please add it in Global Settings.");
-        }
-
-        setIsUploading(true);
+        setIsUploadingDirect(true);
         const toastId = toast.loading("Uploading character image...");
 
         try {
-            const base64 = await fileToBase64(file);
-            const backendUrl = import.meta.env.VITE_BACKEND_URL;
-
-            const res = await fetch(`${backendUrl}/api/upload-character-image`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    rawBytes: base64,
-                    session_token: sessionData.text
-                })
-            });
-
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.error || err.message || "Upload failed");
+            const result = await performUpload(file);
+            if (result) {
+                dispatch({
+                    type: 'UPDATE_CHARACTER',
+                    payload: {
+                        id: character.id,
+                        updates: { image: result.base64, mediaId: result.mediaId }
+                    }
+                });
+                toast.success("Image uploaded successfully!", { id: toastId });
             }
-
-            const data = await res.json();
-
-            if (!data.uploadMediaGenerationId) {
-                throw new Error("Missing uploadMediaGenerationId in response");
-            }
-
-            setEditState(prev => ({
-                ...prev,
-                image: base64,
-                mediaId: data.uploadMediaGenerationId
-            }));
-
-            toast.success("Image uploaded successfully!", { id: toastId });
         } catch (err) {
             console.error(err);
             toast.error(err.message || "Error uploading image", { id: toastId });
         } finally {
-            setIsUploading(false);
+            setIsUploadingDirect(false);
+            e.target.value = null; // reset input
+        }
+    };
+
+    // Handler for Upload inside the Edit Dialog
+    const handleEditDialogUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        setIsUploadingEdit(true);
+        const toastId = toast.loading("Uploading character image...");
+
+        try {
+            const result = await performUpload(file);
+            if (result) {
+                setEditState(prev => ({
+                    ...prev,
+                    image: result.base64,
+                    mediaId: result.mediaId
+                }));
+                toast.success("Image uploaded successfully!", { id: toastId });
+            }
+        } catch (err) {
+            console.error(err);
+            toast.error(err.message || "Error uploading image", { id: toastId });
+        } finally {
+            setIsUploadingEdit(false);
             e.target.value = null; // reset input
         }
     };
@@ -90,15 +129,34 @@ const CharacterCard = ({ character, dispatch }) => {
         <>
             <div className="flex flex-col bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
 
-                <div className="aspect-square bg-slate-100 relative flex items-center justify-center border-b border-slate-100 overflow-hidden">
+                {/* Square Image Container */}
+                <div className="aspect-square bg-slate-100 relative flex items-center justify-center border-b border-slate-100 overflow-hidden group">
+
+                    {/* Character Number Badge */}
+                    <div className="absolute top-2 left-2 bg-slate-900/70 text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded z-20 backdrop-blur-sm shadow-sm pointer-events-none">
+                        {index + 1}
+                    </div>
+
                     {character.image ? (
                         <img src={character.image} alt="Character" className="w-full h-full object-cover" />
                     ) : (
                         <FaUserCircle className="text-slate-300 text-6xl" />
                     )}
+
+                    {/* Direct Upload Hover Overlay */}
+                    <div className={`absolute inset-0 bg-black/40 transition-opacity flex flex-col items-center justify-center text-white backdrop-blur-[1px] z-10 ${isUploadingDirect ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                        {isUploadingDirect ? (
+                            <FaSpinner className="animate-spin text-3xl drop-shadow-md" />
+                        ) : (
+                            <label className="cursor-pointer bg-white/90 p-3 rounded-full hover:bg-white text-slate-700 shadow-sm transition-transform hover:scale-110" title="Upload Image directly">
+                                <FaUpload size={16} />
+                                <input type="file" hidden onChange={handleDirectUpload} accept="image/*" />
+                            </label>
+                        )}
+                    </div>
                 </div>
 
-                {/* Bottom Bar: Replaced Name with Description */}
+                {/* Bottom Bar: Description & Actions */}
                 <div className="p-3 flex items-center justify-between gap-2 bg-white">
                     <span className="font-medium text-xs text-slate-600 truncate flex-1">
                         {character.description || 'No description'}
@@ -107,14 +165,16 @@ const CharacterCard = ({ character, dispatch }) => {
                     <div className="flex items-center gap-1 flex-shrink-0">
                         <button
                             onClick={handleOpenEdit}
-                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                            disabled={isUploadingDirect}
+                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             title="Edit Character"
                         >
                             <FaEdit size={14} />
                         </button>
                         <button
                             onClick={() => dispatch({ type: 'DELETE_CHARACTER', payload: character.id })}
-                            className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                            disabled={isUploadingDirect}
+                            className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             title="Delete Character"
                         >
                             <FaTrash size={14} />
@@ -126,7 +186,7 @@ const CharacterCard = ({ character, dispatch }) => {
             <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
                 <DialogContent className="sm:max-w-[400px]">
                     <DialogHeader>
-                        <DialogTitle>Edit Character</DialogTitle>
+                        <DialogTitle>Edit Character #{index + 1}</DialogTitle>
                     </DialogHeader>
 
                     <div className="py-4 flex flex-col gap-5">
@@ -138,14 +198,14 @@ const CharacterCard = ({ character, dispatch }) => {
                                     <FaUserCircle className="text-slate-300 text-5xl" />
                                 )}
 
-                                <label className={`absolute inset-0 bg-black/40 transition-opacity flex flex-col items-center justify-center text-white cursor-pointer backdrop-blur-[1px] ${isUploading ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                                    {isUploading ? (
+                                <label className={`absolute inset-0 bg-black/40 transition-opacity flex flex-col items-center justify-center text-white cursor-pointer backdrop-blur-[1px] ${isUploadingEdit ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                                    {isUploadingEdit ? (
                                         <FaSpinner className="animate-spin text-2xl" />
                                     ) : (
                                         <>
                                             <FaUpload size={18} className="mb-1" />
                                             <span className="text-xs font-medium">Upload</span>
-                                            <input type="file" hidden onChange={handleImageUpload} accept="image/*" disabled={isUploading} />
+                                            <input type="file" hidden onChange={handleEditDialogUpload} accept="image/*" disabled={isUploadingEdit} />
                                         </>
                                     )}
                                 </label>
@@ -171,8 +231,8 @@ const CharacterCard = ({ character, dispatch }) => {
                     </div>
 
                     <DialogFooter className="flex gap-2 sm:justify-end">
-                        <Button variant="outline" onClick={handleCancel} disabled={isUploading}>Cancel</Button>
-                        <Button onClick={handleSave} disabled={isUploading} className="bg-blue-600 hover:bg-blue-700 text-white">Save Changes</Button>
+                        <Button variant="outline" onClick={handleCancel} disabled={isUploadingEdit}>Cancel</Button>
+                        <Button onClick={handleSave} disabled={isUploadingEdit} className="bg-blue-600 hover:bg-blue-700 text-white">Save Changes</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
@@ -206,9 +266,10 @@ const CharactersSection = () => {
                 </div>
             ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                    {characters.map(char => (
+                    {characters.map((char, index) => (
                         <CharacterCard
                             key={char.id}
+                            index={index}
                             character={char}
                             dispatch={dispatch}
                         />

@@ -62,8 +62,7 @@ const Scene = ({ scene, index }) => {
     };
 
     const handleCleanScene = () => {
-        dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'image', value: null } });
-        dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'prompt', value: "" } });
+        dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, updates: { image: null, prompt: "", subjectMediaIds: [] } } });
         setLastGeneratedPrompt(null);
         toast.success("Scene cleaned");
     };
@@ -79,14 +78,32 @@ const Scene = ({ scene, index }) => {
         const toastId = toast.loading("Generating image...");
         try {
             const backendUrl = import.meta.env.VITE_BACKEND_URL;
-            const res = await fetch(`${backendUrl}/api/generate-image`, {
+            const subjectIds = scene.subjectMediaIds || [];
+            const allStateCharacters = state.characters || [];
+            
+            let endpoint = `${backendUrl}/api/generate-image`;
+            let reqBody = {
+                prompt: scene.prompt,
+                session_token: sessionData.text,
+            };
+
+            if (subjectIds.length > 0) {
+                endpoint = `${backendUrl}/api/generate-image-chars`;
+                reqBody.characters = subjectIds.map(id => {
+                    const c = allStateCharacters.find(ch => ch.mediaId === id);
+                    return {
+                        mediaId: id,
+                        description: c ? (c.description || 'Character') : 'Character'
+                    };
+                });
+            }
+
+            const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    prompt: scene.prompt,
-                    session_token: sessionData.text,
-                })
+                body: JSON.stringify(reqBody)
             });
+            
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 if (err.refresh) {
@@ -126,6 +143,12 @@ const Scene = ({ scene, index }) => {
         const previousScene = previousScenes.length > 0 ? previousScenes[previousScenes.length - 1] : null;
         const previousPrompt = previousScene ? previousScene.prompt : null;
 
+        const activeCharacters = (state.characters || []).filter(c => c.mediaId);
+        const charactersPayload = activeCharacters.length > 0 ? activeCharacters.map(c => ({
+            mediaId: c.mediaId,
+            description: c.description || 'character'
+        })) : null;
+
         setIsGeneratingTxt(true);
         const toastId = toast.loading("Generating prompt...");
         try {
@@ -140,9 +163,11 @@ const Scene = ({ scene, index }) => {
                     title: state.title || 'Untitled',
                     scene_lines: sceneText,
                     instructions: instData.text ? instData.text : null,
-                    previous_prompt: previousPrompt
+                    previous_prompt: previousPrompt,
+                    characters: charactersPayload
                 })
             });
+            
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 throw new Error(err.message || "Failed to generate");
@@ -150,7 +175,16 @@ const Scene = ({ scene, index }) => {
 
             const data = await res.json();
             if (data.prompt) {
-                dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'prompt', value: data.prompt } });
+                dispatch({ 
+                    type: 'UPDATE_SCENE_META', 
+                    payload: { 
+                        id: scene.id, 
+                        updates: { 
+                            prompt: data.prompt, 
+                            subjectMediaIds: data.subject_media_ids || [] 
+                        } 
+                    } 
+                });
                 toast.success("Prompt Generated", { id: toastId });
             } else {
                 throw new Error("No prompt returned");

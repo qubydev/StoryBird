@@ -49,9 +49,10 @@ const reducer = (state, action) => {
         case 'ADD_CHARACTER': {
             const rawId = String(generateId());
             const shortId = rawId.length > 6 ? rawId.substring(rawId.length - 6) : rawId;
+            const randomHash = Math.random().toString(36).substring(2, 6);
 
             const newChar = {
-                id: `char_${shortId}`,
+                id: `char_${shortId}_${randomHash}`,
                 description: '',
                 image: null,
                 mediaId: null
@@ -94,7 +95,7 @@ const reducer = (state, action) => {
             return {
                 ...state,
                 items: state.items.map(item =>
-                    item.type === 'scene' ? { ...item, prompt: "", promptGenStatus: null } : item
+                    item.type === 'scene' ? { ...item, prompt: "", promptGenStatus: null, subjectMediaIds: [] } : item
                 ),
                 isDirty: true
             };
@@ -156,6 +157,7 @@ const reducer = (state, action) => {
                 id: generateId(),
                 image: null,
                 prompt: "",
+                subjectMediaIds: [],
                 sentences: selectedItems.map(s => ({ ...s }))
             };
 
@@ -218,6 +220,7 @@ const reducer = (state, action) => {
                     id: generateId(),
                     image: null,
                     prompt: "",
+                    subjectMediaIds: [],
                     sentences: groupSentences.map(s => ({ ...s }))
                 };
             }).filter(Boolean);
@@ -246,7 +249,7 @@ const reducer = (state, action) => {
             const endStr = parseFloat((startStr + 1.0).toFixed(2));
 
             const newItem = action.payload.type === 'scene'
-                ? { type: 'scene', id: generateId(), sentences: [], image: null, prompt: "" }
+                ? { type: 'scene', id: generateId(), sentences: [], image: null, prompt: "", subjectMediaIds: [] }
                 : { type: 'sentence', id: generateId(), text: "", start: startStr, end: endStr };
 
             return { ...state, items: [...state.items, newItem], isDirty: true };
@@ -271,9 +274,15 @@ const reducer = (state, action) => {
         case 'UPDATE_SCENE_META':
             return {
                 ...state,
-                items: state.items.map(i =>
-                    i.id === action.payload.id ? { ...i, [action.payload.field]: action.payload.value } : i
-                ),
+                items: state.items.map(i => {
+                    if (i.id === action.payload.id) {
+                        if (action.payload.updates) {
+                            return { ...i, ...action.payload.updates };
+                        }
+                        return { ...i, [action.payload.field]: action.payload.value };
+                    }
+                    return i;
+                }),
                 isDirty: true
             };
 

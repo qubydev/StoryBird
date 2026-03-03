@@ -5,6 +5,7 @@ from fastapi import status
 WHISK_SESSION_TOKEN_KEY = "whisk:session_token"
 SESSION_URL = "https://labs.google/fx/api/auth/session"
 IMAGE_GENERATION_URL = "https://aisandbox-pa.googleapis.com/v1/whisk:generateImage"
+IMAGE_RECIPE_URL = "https://aisandbox-pa.googleapis.com/v1/whisk:runImageRecipe"
 UPLOAD_IMAGE_URL = "https://labs.google/fx/api/trpc/backbone.uploadImage"
 REFRESH_STATUSES = [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN]
 
@@ -49,7 +50,7 @@ def fetch_access_token(session_token):
 
 
 # --------------------------------
-# Image Generation
+# Standard Image Generation
 # --------------------------------
 def generate_image(
     prompt,
@@ -57,7 +58,6 @@ def generate_image(
     model="IMAGEN_3_5",
     session_token=None,
 ):
-
     if not session_token:
         raise WhiskError(
             status.HTTP_400_BAD_REQUEST,
@@ -109,13 +109,7 @@ def generate_image(
     if not response.ok:
         try:
             error_data = response.json()
-
-            message = (
-                error_data
-                .get("error", {})
-                .get("message", "Unknown error occurred")
-            )
-
+            message = error_data.get("error", {}).get("message", "Unknown error occurred")
         except ValueError:
             message = response.text or "Unknown error occurred"
         
@@ -127,7 +121,96 @@ def generate_image(
             response.status_code,
             message,
             refresh=should_refresh,
-            errors=error_data.get("error", {}).get("details", [])
+            errors=error_data.get("error", {}).get("details", []) if 'error_data' in locals() else []
+        )
+
+    return response.json()
+
+
+# --------------------------------
+# Image Generation with Characters
+# --------------------------------
+def generate_image_with_chars(
+    prompt,
+    characters,
+    aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE",
+    session_token=None,
+):
+    if not session_token:
+        raise WhiskError(
+            status.HTTP_400_BAD_REQUEST,
+            "Session token is required to generate image",
+        )
+
+    if not prompt:
+        raise WhiskError(
+            status.HTTP_400_BAD_REQUEST,
+            "Prompt is required to generate image",
+        )
+
+    access_token = r_client.get(WHISK_SESSION_TOKEN_KEY)
+
+    if isinstance(access_token, bytes):
+        access_token = access_token.decode("utf-8")
+
+    if not access_token:
+        access_token = fetch_access_token(session_token)
+        r_client.set(WHISK_SESSION_TOKEN_KEY, access_token)
+
+        access_token = r_client.get(WHISK_SESSION_TOKEN_KEY)
+        if isinstance(access_token, bytes):
+            access_token = access_token.decode("utf-8")
+
+    if not access_token:
+        raise WhiskError(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Failed to update access token",
+        )
+
+    recipe_media_inputs = []
+    for char in characters:
+        recipe_media_inputs.append({
+            "caption": char.get("description", "Character"),
+            "mediaInput": {
+                "mediaCategory": "MEDIA_CATEGORY_SUBJECT",
+                "mediaGenerationId": char.get("mediaId")
+            }
+        })
+
+    payload = {
+        "imageModelSettings": {
+            "imageModel": "GEM_PIX",
+            "aspectRatio": aspect_ratio
+        },
+        "userInstruction": prompt,
+        "recipeMediaInputs": recipe_media_inputs
+    }
+
+    response = requests.post(
+        IMAGE_RECIPE_URL,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+    )
+
+    if not response.ok:
+        try:
+            error_data = response.json()
+            message = error_data.get("error", {}).get("message", "Unknown error occurred")
+        except ValueError:
+            message = response.text or "Unknown error occurred"
+        
+        should_refresh = response.status_code in REFRESH_STATUSES
+        if should_refresh:
+            r_client.delete(WHISK_SESSION_TOKEN_KEY)
+
+        raise WhiskError(
+            response.status_code,
+            message,
+            refresh=should_refresh,
+            errors=error_data.get("error", {}).get("details", []) if 'error_data' in locals() else []
         )
 
     return response.json()
