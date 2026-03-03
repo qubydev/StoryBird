@@ -139,7 +139,7 @@ def generate_image_prompt(
     instructions = instructions or "No instructions."
     formatted_previous_scene = "No previous scene available."
     if previous_scene:
-        formatted_previous_scene = f"- Scene Lines: {previous_scene.get('scene_lines', 'N/A')}\n- Generated Prompt: {previous_scene.get('prompt', 'N/A')}"
+        formatted_previous_scene = f"- Scene Lines: {previous_scene.get('lines', 'N/A')}\n- Generated Prompt: {previous_scene.get('prompt', 'N/A')}"
     formatted_characters = "No characters."
     if characters and len(characters) > 0:
         formatted_characters = "\n".join([f"[CH{i+1}]\n- Name: {c.name}\n- Description: {c.description}" for i, c in enumerate(characters)])
@@ -155,4 +155,4 @@ def generate_image_prompt(
             formatted_characters=formatted_characters
         )}
     ])
-    return response.prompt
+    return {"prompt": response.prompt}

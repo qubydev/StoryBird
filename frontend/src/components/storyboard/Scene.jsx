@@ -1,3 +1,5 @@
+// File: /frontend/src/components/storyboard/Scene.jsx
+
 import React, { useState, useEffect } from 'react';
 import { useStoryBoard } from '../../context/StoryBoardContext';
 import { getSceneDuration, fileToBase64, getStorageItem, refreshSessionKey } from '../../lib/storyboard-utils';
@@ -83,7 +85,6 @@ const Scene = ({ scene, index }) => {
         let finalPrompt = localPrompt;
         const matches = localPrompt.match(/\[CH(?:\d+|X)\]/g) || [];
 
-        // Auto-initialize new links based on order if they don't exist
         matches.forEach(tag => {
             if (tag !== '[CHX]') {
                 if (!newMap[tag]) {
@@ -91,11 +92,9 @@ const Scene = ({ scene, index }) => {
                     if (!isNaN(num) && state.characters && state.characters[num]) {
                         newMap[tag] = state.characters[num].id;
                     } else {
-                        // Tag is out of bounds (e.g. [CH3] but only 2 characters exist)
                         finalPrompt = finalPrompt.split(tag).join('[CHX]');
                     }
                 } else {
-                    // Double check if a previously mapped character was somehow deleted and lingering
                     const charExists = state.characters?.some(c => c.id === newMap[tag]);
                     if (!charExists) {
                         finalPrompt = finalPrompt.split(tag).join('[CHX]');
@@ -116,12 +115,10 @@ const Scene = ({ scene, index }) => {
     const handleGenerateImage = async () => {
         if (!scene.prompt) return toast.error("Enter a prompt first");
 
-        // Validation: Unlinked Characters
         if (scene.prompt.includes('[CHX]')) {
             return toast.error("Error: Prompt contains unlinked character [CHX]");
         }
 
-        // Validation: Missing Media ID
         const allStateCharacters = state.characters || [];
         const promptTags = scene.prompt.match(/\[CH(?:\d+)\]/g) || [];
         for (const tag of promptTags) {
@@ -142,7 +139,6 @@ const Scene = ({ scene, index }) => {
         try {
             const backendUrl = import.meta.env.VITE_BACKEND_URL;
 
-            // Re-resolve active subject IDs from characterMap exactly based on the prompt's tags
             const matches = scene.prompt.match(/\[CH(?:\d+|X)\]/g) || [];
             const subjectIds = matches.map(tag => {
                 const charId = scene.characterMap?.[tag];
@@ -210,12 +206,15 @@ const Scene = ({ scene, index }) => {
         const sceneIndex = state.items.findIndex(i => i.id === scene.id);
         const previousScenes = state.items.slice(0, sceneIndex).filter(i => i.type === 'scene');
         const previousScene = previousScenes.length > 0 ? previousScenes[previousScenes.length - 1] : null;
-        const previousPrompt = previousScene ? previousScene.prompt : null;
 
-        const activeCharacters = (state.characters || []).filter(c => c.mediaId);
-        const charactersPayload = activeCharacters.length > 0 ? activeCharacters.map(c => ({
-            mediaId: c.mediaId,
-            description: c.description || 'character'
+        const previousScenePayload = previousScene ? {
+            prompt: previousScene.prompt,
+            lines: previousScene.sentences.map(s => s.text).join(' ').trim()
+        } : null;
+
+        const charactersPayload = (state.characters || []).length > 0 ? state.characters.map(c => ({
+            name: c.name || 'Unknown Character',
+            description: c.description || 'Character'
         })) : null;
 
         setIsGeneratingTxt(true);
@@ -231,9 +230,9 @@ const Scene = ({ scene, index }) => {
                 body: JSON.stringify({
                     title: state.title || 'Untitled',
                     scene_lines: sceneText,
-                    instructions: instData.text ? instData.text : null,
-                    previous_prompt: previousPrompt,
-                    characters: charactersPayload
+                    previous_scene: previousScenePayload,
+                    characters: charactersPayload,
+                    instructions: instData.text ? instData.text : null
                 })
             });
 
@@ -245,7 +244,6 @@ const Scene = ({ scene, index }) => {
             const data = await res.json();
             if (data.prompt) {
 
-                // Construct fresh mapping based on what LLM returned
                 const newMap = { ...(scene.characterMap || {}) };
                 let finalPrompt = data.prompt;
                 const matches = data.prompt.match(/\[CH(?:\d+|X)\]/g) || [];
@@ -253,10 +251,9 @@ const Scene = ({ scene, index }) => {
                 matches.forEach(tag => {
                     if (tag !== '[CHX]') {
                         const num = parseInt(tag.replace(/\D/g, ''), 10) - 1;
-                        if (activeCharacters[num]) {
-                            newMap[tag] = activeCharacters[num].id;
+                        if (state.characters && state.characters[num]) {
+                            newMap[tag] = state.characters[num].id;
                         } else {
-                            // Backend generated an invalid out-of-bounds tag
                             finalPrompt = finalPrompt.split(tag).join('[CHX]');
                         }
                     }
@@ -318,7 +315,6 @@ const Scene = ({ scene, index }) => {
         }
 
         if (newTag !== tag) {
-            // Replace all occurrences of the old tag with the new tag in the prompt text
             newPrompt = newPrompt.split(tag).join(newTag);
         }
 
@@ -333,7 +329,7 @@ const Scene = ({ scene, index }) => {
             }
         });
 
-        setLocalPrompt(newPrompt); // Keep local state in sync
+        setLocalPrompt(newPrompt);
         setLinkDialog(null);
     };
 
@@ -381,7 +377,6 @@ const Scene = ({ scene, index }) => {
     return (
         <Card className="overflow-hidden border-slate-200 shadow-sm transition-shadow relative">
 
-            {/* Link Character Dialog */}
             <Dialog open={!!linkDialog} onOpenChange={(open) => !open && setLinkDialog(null)}>
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader>

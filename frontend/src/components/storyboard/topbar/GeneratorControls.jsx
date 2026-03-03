@@ -134,10 +134,9 @@ const GeneratorControls = () => {
 
         const instData = getStorageItem('sb_global_instructions');
 
-        const activeCharacters = (state.characters || []).filter(c => c.mediaId);
-        const charactersPayload = activeCharacters.length > 0 ? activeCharacters.map(c => ({
-            mediaId: c.mediaId,
-            description: c.description || 'character'
+        const charactersPayload = (state.characters || []).length > 0 ? state.characters.map(c => ({
+            name: c.name || 'Unknown Character',
+            description: c.description || 'Character'
         })) : null;
 
         setIsGeneratingPrompts(true);
@@ -151,6 +150,7 @@ const GeneratorControls = () => {
             let scenesProcessed = 0;
             let scenesSkipped = 0;
             let lastPrompt = null;
+            let lastSceneText = null;
 
             for (let i = 0; i < scenesToProcess.length; i++) {
                 if (signal.aborted) break;
@@ -159,6 +159,7 @@ const GeneratorControls = () => {
                 if (item.prompt && item.prompt.trim().length > 0) {
                     scenesSkipped++;
                     lastPrompt = item.prompt;
+                    lastSceneText = item.sentences.map(s => s.text).join(' ').trim();
                     continue;
                 }
 
@@ -167,6 +168,11 @@ const GeneratorControls = () => {
                     scenesSkipped++;
                     continue;
                 }
+
+                const previousScenePayload = lastPrompt ? {
+                    prompt: lastPrompt,
+                    lines: lastSceneText
+                } : null;
 
                 try {
                     dispatch({ type: 'UPDATE_SCENE_META', payload: { id: item.id, field: 'promptGenStatus', value: 'generating' } });
@@ -177,9 +183,9 @@ const GeneratorControls = () => {
                         body: JSON.stringify({
                             title: state.title || 'Untitled',
                             scene_lines: sceneText,
-                            instructions: instData.text ? instData.text : null,
-                            previous_prompt: lastPrompt,
-                            characters: charactersPayload
+                            previous_scene: previousScenePayload,
+                            characters: charactersPayload,
+                            instructions: instData.text ? instData.text : null
                         }),
                         signal
                     });
@@ -191,15 +197,14 @@ const GeneratorControls = () => {
 
                     const data = await res.json();
                     if (data.prompt) {
-                        // Dynamically build the mapping for bulk auto-generated prompts
                         const newMap = { ...(item.characterMap || {}) };
                         const matches = data.prompt.match(/\[CH(?:\d+|X)\]/g) || [];
-
+                        
                         matches.forEach(tag => {
                             if (tag !== '[CHX]') {
                                 const num = parseInt(tag.replace(/\D/g, ''), 10) - 1;
-                                if (activeCharacters[num]) {
-                                    newMap[tag] = activeCharacters[num].id;
+                                if (state.characters && state.characters[num]) {
+                                    newMap[tag] = state.characters[num].id;
                                 }
                             }
                         });
@@ -217,6 +222,7 @@ const GeneratorControls = () => {
                         });
                         scenesProcessed++;
                         lastPrompt = data.prompt;
+                        lastSceneText = sceneText;
                     }
                 } catch (e) {
                     if (e.name !== 'AbortError') {
@@ -320,7 +326,6 @@ const GeneratorControls = () => {
 
                 const promise = (async () => {
                     try {
-                        // --- Bulk Validation Hooks ---
                         if (scene.prompt.includes('[CHX]')) {
                             throw new Error(`Prompt contains unlinked character [CHX]`);
                         }
@@ -333,11 +338,9 @@ const GeneratorControls = () => {
                                 throw new Error(`Linked character "${character.name || tag}" is missing an uploaded image.`);
                             }
                         }
-                        // -----------------------------
 
                         dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'imageGenStatus', value: 'generating' } });
 
-                        // Re-resolve active subject IDs based on current mapping
                         const subjectIds = promptTags.map(tag => {
                             const charId = scene.characterMap?.[tag];
                             const character = allStateCharacters.find(c => c.id === charId);
