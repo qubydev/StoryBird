@@ -29,12 +29,9 @@ class DetectedCharacters(BaseModel):
 GENERATE_SCENES_SYSTEM = """You are a creative animator working on a story. Lines from a script with their indices are provided to you. Your task is to group these lines into scenes.
 
 RULES:
-- Lines fitting in a single background, character and other settings belongs to the same scene.
-- If any of these changes, a new scene should be created.
-- Focus on creating short meaningful scenes (generally 1-2 lines) rather than longer ones.
-
-- Return ONLY a valid JSON list of lists of line indices.
-- Do not miss or repeat any index.
+- Lines fitting in a single background, character, camera angle and other settings belongs to the same scene.
+- If any of these or camera angle changes, a new scene should be created.
+- Focus on creating many short scenes rather than few long scenes.
 
 EXAMPLE OF DESIRED PACING:
 Lines:

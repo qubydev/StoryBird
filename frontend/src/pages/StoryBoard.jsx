@@ -5,14 +5,14 @@ import Scene from '../components/storyboard/Scene';
 import Sentence from '../components/storyboard/Sentence';
 import CharactersSection from '../components/storyboard/CharactersSection';
 import { Button } from '@/components/ui/button';
-import { FaPlus } from 'react-icons/fa';
+import { FaPlus, FaVideo } from 'react-icons/fa';
+import { useNavigate } from 'react-router-dom';
 
-// --- MAIN COMPONENT ---
 const StoryBoardInner = () => {
     const { state, dispatch } = useStoryBoard();
     const lastSelectedIdRef = useRef(null);
+    const navigate = useNavigate();
 
-    // --- SELECTION LOGIC ---
     const handleSelection = (id, index, isShift) => {
         if (isShift && lastSelectedIdRef.current) {
             const lastIndex = state.items.findIndex(i => i.id === lastSelectedIdRef.current);
@@ -32,24 +32,30 @@ const StoryBoardInner = () => {
     };
 
     return (
-        <div className="min-h-screen bg-slate-100 pb-20">
+        <div className="min-h-screen bg-slate-100 pb-20 relative">
 
             <TopBar />
 
-            {/* CANVAS */}
             <main className="max-w-5xl mx-auto mt-8 px-4 space-y-4">
 
-                {/* NEW CHARACTERS SECTION */}
                 <CharactersSection />
 
                 {state.items.length === 0 ? (
                     <div className="text-center py-10 text-slate-400 flex flex-col items-center gap-3">
                         <p className="text-sm">Start by adding items.</p>
                         <div className="flex gap-2">
-                            <Button size="sm" onClick={() => dispatch({ type: 'ADD_ITEM', payload: { type: 'scene' } })} className="bg-blue-600 hover:bg-blue-700 text-white">
+                            <Button
+                                size="sm"
+                                onClick={() => dispatch({ type: 'ADD_ITEM', payload: { type: 'scene' } })}
+                                className="bg-blue-600 hover:bg-blue-700 text-white"
+                            >
                                 <FaPlus className="mr-2" /> Add Scene
                             </Button>
-                            <Button size="sm" variant="outline" onClick={() => dispatch({ type: 'ADD_ITEM', payload: { type: 'sentence' } })}>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => dispatch({ type: 'ADD_ITEM', payload: { type: 'sentence' } })}
+                            >
                                 <FaPlus className="mr-2" /> Add Sentence
                             </Button>
                         </div>
@@ -72,22 +78,50 @@ const StoryBoardInner = () => {
                     })
                 )}
 
-                {/* BOTTOM ACTIONS */}
                 {state.items.length > 0 && (
                     <div className="flex justify-center py-6 gap-4">
                         <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow border border-slate-200 hover:shadow-md transition-shadow">
-                            <Button variant="ghost" size="sm" className="h-6 text-sm text-slate-500 hover:text-blue-600"
-                                onClick={() => dispatch({ type: 'ADD_ITEM', payload: { type: 'scene' } })}>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 text-sm text-slate-500 hover:text-blue-600"
+                                onClick={() => dispatch({ type: 'ADD_ITEM', payload: { type: 'scene' } })}
+                            >
                                 <FaPlus className="mr-1" /> Scene
                             </Button>
-                            <Button variant="ghost" size="sm" className="h-6 text-sm text-slate-500 hover:text-blue-600"
-                                onClick={() => dispatch({ type: 'ADD_ITEM', payload: { type: 'sentence' } })}>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 text-sm text-slate-500 hover:text-blue-600"
+                                onClick={() => dispatch({ type: 'ADD_ITEM', payload: { type: 'sentence' } })}
+                            >
                                 <FaPlus className="mr-1" /> Sentence
                             </Button>
                         </div>
                     </div>
                 )}
             </main>
+
+            <Button
+                onClick={() => navigate('/render')}
+                size="icon"
+                variant="secondary"
+                title="Render Video"
+                className="
+        fixed bottom-6 right-6
+        h-12 w-12
+        rounded-full
+        bg-card
+        border
+        shadow-lg
+        hover:shadow-xl
+        hover:bg-accent
+        transition-all
+        duration-200
+    "
+            >
+                <FaVideo className="h-5 w-5 text-primary" />
+            </Button>
         </div>
     );
 };
@@ -97,4 +131,5 @@ const StoryBoard = () => (
         <StoryBoardInner />
     </StoryBoardProvider>
 );
+
 export default StoryBoard;
