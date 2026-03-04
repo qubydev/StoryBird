@@ -65,9 +65,8 @@ Then update the required values.
 ```bash
 cd frontend
 npm install
+npm run build
 ```
-
-This is a Vite app.
 
 ---
 
@@ -78,7 +77,7 @@ Open two terminals.
 ### Terminal 1 – Backend
 
 ```bash
-uvicorn app:app --reload
+python app.py
 ```
 
 (Runs using Uvicorn)
@@ -87,5 +86,5 @@ uvicorn app:app --reload
 
 ```bash
 cd frontend
-npm run dev
+npm run preview
 ```
