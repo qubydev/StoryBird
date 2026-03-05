@@ -126,6 +126,7 @@ WORD_TO_SENTENCE_TRANSCRIPT_SYSTEM = """You are a professional transcriptionist.
 RULES:
 - MUST NOT change any text of input words. You can only group them into sentences.
 - The start timestamp of a sentence should be the start timestamp of the first word in the sentence, and the end timestamp should be the end timestamp of the last word in the sentence.
+- If mistakenly a sentence level transcript provided, return the data as it is without changing.
 """
 
 WORD_TO_SENTENCE_TRANSCRIPT_USER = """Please convert the following word-level transcript into a sentence-level transcript.

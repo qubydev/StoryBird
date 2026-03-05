@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { useStoryBoard } from '../../../context/StoryBoardContext';
 import { Button } from '@/components/ui/button';
-import { FaObjectGroup, FaTrash, FaTimes, FaLayerGroup, FaFont, FaClock, FaCompressAlt } from 'react-icons/fa';
+import { FaObjectGroup, FaTrash, FaTimes, FaLayerGroup, FaFont, FaClock, FaCompressAlt, FaAlignLeft } from 'react-icons/fa';
 import { calculateStats, formatDuration, isSelectionConsecutive } from '../../../lib/storyboard-utils';
 import toast from 'react-hot-toast';
 
@@ -75,17 +75,24 @@ const StatsDisplay = () => {
     }
 
     return (
-        <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600 font-medium animate-in slide-in-from-top-2 fade-in duration-200">
-            <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded border border-slate-200">
-                <FaLayerGroup className="text-slate-400" />
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 font-medium animate-in slide-in-from-top-2 fade-in duration-200">
+            <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded border border-slate-200">
+                <FaLayerGroup className="text-slate-400 text-xs" />
                 <span>{stats.sceneCount} Scenes</span>
             </div>
-            <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded border border-slate-200">
-                <FaFont className="text-slate-400" />
+
+            <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded border border-slate-200">
+                <FaAlignLeft className="text-slate-400 text-xs" />
+                <span>{stats.sentenceCount} Sentences</span>
+            </div>
+
+            <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded border border-slate-200">
+                <FaFont className="text-slate-400 text-xs" />
                 <span>{stats.wordCount} Words</span>
             </div>
-            <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded border border-slate-200 text-blue-700 font-mono">
-                <FaClock className="text-blue-400" />
+
+            <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded border border-slate-200 text-blue-700 font-mono">
+                <FaClock className="text-blue-400 text-xs" />
                 <span>{formatDuration(stats.duration)}</span>
             </div>
         </div>

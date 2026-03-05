@@ -2,12 +2,17 @@ import React from 'react';
 import { useStoryBoard } from '../../../context/StoryBoardContext';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription, DialogClose } from '@/components/ui/dialog';
-import { FaDownload, FaUpload, FaEraser, FaSpinner } from 'react-icons/fa';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { FaDownload, FaUpload, FaEraser, FaSpinner, FaFileAlt, FaStream } from 'react-icons/fa';
 import { parseTranscript, formatSRTTimestamp, parseSRTTimestamp } from '../../../lib/storyboard-utils';
 import toast from 'react-hot-toast';
 
 const FileMenu = () => {
     const { state, dispatch } = useStoryBoard();
+
+    const projectInputRef = React.useRef(null);
+    const sentenceTranscriptRef = React.useRef(null);
+    const wordTranscriptRef = React.useRef(null);
 
     const handleExport = () => {
         const exportState = {
@@ -46,12 +51,14 @@ const FileMenu = () => {
     const handleProjectImport = (e) => {
         const file = e.target.files[0];
         if (!file) return;
+
         const reader = new FileReader();
+
         reader.onload = (event) => {
             try {
                 const json = JSON.parse(event.target.result);
+
                 if (json.items && Array.isArray(json.items)) {
-                    
                     const normalizedItems = json.items.map(item => {
                         if (item.type === 'scene') {
                             return {
@@ -69,6 +76,7 @@ const FileMenu = () => {
                                 end: parseSRTTimestamp(item.end)
                             };
                         }
+
                         return item;
                     });
 
@@ -83,6 +91,7 @@ const FileMenu = () => {
                 toast.error(err.message);
             }
         };
+
         reader.readAsText(file);
     };
 
@@ -90,10 +99,17 @@ const FileMenu = () => {
         const file = e.target.files[0];
         if (!file) return;
 
+        if (!file.name.toLowerCase().endsWith('.srt')) {
+            toast.error("Only SRT files are supported");
+            return;
+        }
+
         const reader = new FileReader();
+
         reader.onload = (event) => {
             try {
                 const parsedSentences = parseTranscript(event.target.result, file.name);
+
                 if (parsedSentences.length > 0) {
                     dispatch({ type: 'IMPORT_TRANSCRIPT', payload: parsedSentences });
                     toast.success(`Imported ${parsedSentences.length} sentences`);
@@ -104,6 +120,76 @@ const FileMenu = () => {
                 toast.error(err.message);
             }
         };
+
+        reader.readAsText(file);
+    };
+
+    const handleWordTranscriptImport = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        if (!file.name.toLowerCase().endsWith('.srt')) {
+            toast.error("Only SRT files are supported");
+            return;
+        }
+
+        const reader = new FileReader();
+
+        reader.onload = async (event) => {
+            const loadingToast = toast.loading("Analyzing word-level transcript with AI...");
+
+            try {
+                const srtData = event.target.result;
+
+                const blocks = srtData.trim().split(/\n\s*\n/);
+
+                const isWordLevel = blocks.some(block => {
+                    const lines = block.split('\n');
+                    if (lines.length < 3) return false;
+                    const text = lines.slice(2).join(' ').trim();
+                    return text.split(/\s+/).length === 1;
+                });
+
+                if (!isWordLevel) {
+                    toast.dismiss(loadingToast);
+                    toast.error("File does not appear to be a word-level SRT transcript");
+                    return;
+                }
+
+                const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/word-to-sentence-transcript`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        word_level_transcript: srtData
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error("Failed to process word transcript");
+                }
+
+                const data = await response.json();
+
+                if (!data.sentences || !Array.isArray(data.sentences)) {
+                    throw new Error("Invalid response from server");
+                }
+
+                const parsedSentences = data.sentences.map(s => ({
+                    ...s,
+                    start: parseSRTTimestamp(s.start),
+                    end: parseSRTTimestamp(s.end)
+                }));
+
+                dispatch({ type: 'IMPORT_TRANSCRIPT', payload: parsedSentences });
+
+                toast.success(`Imported ${parsedSentences.length} sentences`, { id: loadingToast });
+            } catch (err) {
+                toast.error(err.message, { id: loadingToast });
+            }
+        };
+
         reader.readAsText(file);
     };
 
@@ -122,19 +208,57 @@ const FileMenu = () => {
                 <FaDownload className="mr-2" /> Export
             </Button>
 
-            <Button variant="ghost" size="sm" asChild className="h-9 text-sm px-2 sm:px-3">
-                <label className="cursor-pointer" title="Import Anim-Board Project">
-                    <FaUpload className="mr-2" /> Board
-                    <input type="file" hidden onChange={handleProjectImport} onClick={(e) => (e.target.value = null)} accept=".json" />
-                </label>
-            </Button>
+            <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-9 text-sm px-2 sm:px-3">
+                        <FaUpload className="mr-2" /> Import
+                    </Button>
+                </DropdownMenuTrigger>
 
-            <Button variant="ghost" size="sm" asChild className="h-9 text-sm px-2 sm:px-3 text-slate-600 hover:text-blue-600 hover:bg-blue-50">
-                <label className="cursor-pointer" title="Import SRT or VTT Transcript">
-                    <FaUpload className="mr-2" /> Transcript
-                    <input type="file" hidden onChange={handleTranscriptImport} onClick={(e) => (e.target.value = null)} accept=".srt,.vtt" />
-                </label>
-            </Button>
+                <DropdownMenuContent align="start">
+                    <DropdownMenuItem onClick={() => projectInputRef.current.click()}>
+                        <FaFileAlt className="mr-2" />
+                        Import Story Board
+                    </DropdownMenuItem>
+
+                    <DropdownMenuItem onClick={() => sentenceTranscriptRef.current.click()}>
+                        <FaStream className="mr-2" />
+                        Sentence Level Transcript
+                    </DropdownMenuItem>
+
+                    <DropdownMenuItem onClick={() => wordTranscriptRef.current.click()}>
+                        <FaStream className="mr-2" />
+                        Word Level Transcript <span className="text-blue-500 font-bold bg-blue-500/10 px-1 rounded-sm">AI</span>
+                    </DropdownMenuItem>
+                </DropdownMenuContent>
+            </DropdownMenu>
+
+            <input
+                ref={projectInputRef}
+                type="file"
+                hidden
+                accept=".json"
+                onChange={handleProjectImport}
+                onClick={(e) => (e.target.value = null)}
+            />
+
+            <input
+                ref={sentenceTranscriptRef}
+                type="file"
+                hidden
+                accept=".srt"
+                onChange={handleTranscriptImport}
+                onClick={(e) => (e.target.value = null)}
+            />
+
+            <input
+                ref={wordTranscriptRef}
+                type="file"
+                hidden
+                accept=".srt"
+                onChange={handleWordTranscriptImport}
+                onClick={(e) => (e.target.value = null)}
+            />
 
             <Dialog>
                 <DialogTrigger asChild>
@@ -142,6 +266,7 @@ const FileMenu = () => {
                         <FaEraser className="mr-2" /> Clear
                     </Button>
                 </DialogTrigger>
+
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>Clear Storyboard?</DialogTitle>
@@ -149,9 +274,17 @@ const FileMenu = () => {
                             This action cannot be undone. This will permanently delete all scenes and sentences.
                         </DialogDescription>
                     </DialogHeader>
+
                     <DialogFooter>
-                        <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
-                        <DialogClose asChild><Button variant="destructive" onClick={handleClearConfirm}>Yes, Clear All</Button></DialogClose>
+                        <DialogClose asChild>
+                            <Button variant="outline">Cancel</Button>
+                        </DialogClose>
+
+                        <DialogClose asChild>
+                            <Button variant="destructive" onClick={handleClearConfirm}>
+                                Yes, Clear All
+                            </Button>
+                        </DialogClose>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
