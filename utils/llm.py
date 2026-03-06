@@ -38,18 +38,18 @@ class  TranscriptSentence(BaseModel):
     start: str = Field(..., description="The start timestamp of the sentence in the format 00:00:00,000")
     end: str = Field(..., description="The end timestamp of the sentence in the format 00:00:00,000")
 
-class WordToSentenceTranscript(BaseModel):
+class SentenceTranscript(BaseModel):
     sentences: list[TranscriptSentence] = Field(..., description="A list of sentences with their text and timestamps.")
 
-GENERATE_SCENES_SYSTEM = """You are a creative animator working on a story. Lines from a script with their indices are provided to you. Your task is to group these lines into scenes.
+GENERATE_SCENES_SYSTEM = """You are a professional Storyboard Artist and Cinematographer. 
+Lines from a script with their indices are provided to you. Your task is to break these lines into individual SHOTS (scenes).
 
 RULES:
-- Lines fitting in a single background, character, camera angle and other settings belongs to the same scene.
-- If any of these or camera angle changes, a new scene should be created.
-- Focus on creating many short scenes rather than few long scenes.
+- Lines that can be represented in a single shot should be grouped together in the same scene.
+- If a line describes a change in location, time, or a significant change in action, it should be the start of a new scene.
+- Aim for 1-3 lines per scene, don't exceed the limit of 3 lines in a single scene unless the next line is a direct continuation of the previous one and they both can be represented in a single shot.
 
-EXAMPLE OF DESIRED PACING:
-Lines:
+EXAMPLE:
 0: "Paris, 1925."
 1: "The city is recovering from the Great War."
 2: "And the Eiffel Tower is rusting."
@@ -60,7 +60,7 @@ Lines:
 7: "The French Government."
 
 Expected Output:
-[[0, 1], [2], [3, 4, 5], [6, 7]]
+[[0], [1], [2], [3, 4], [5], [6, 7]]
 """
 
 GENERATE_SCENES_USER = """Please generate scenes for the following script:
@@ -82,7 +82,7 @@ INPUTS:
 
 RULES:
 - If the previous scenes and the current one seem to be a continuation, ensure visual continuity of the generated image prompt with the previous scenes' prompts.
-- To include a character in the prompt from given list, you use a special notation **[CHX]** where X is the index of the character in the provided character list (starting from 1). For example, if you want to include the first character from the list, you would use [CH1] in your prompt.
+- To include a character in the prompt from given list, you use a special notation **[CHX]** where X is the index of the character in the provided character list (starting from 1). - Generate current scene's image prompt in continuity with the previous scenes.
 - All the characters present in the whole story is provided to you, but you include only the characters that are required in current scene.
 - If there is no characters in the scene, you just ignore the provided character list.
 - If there is a character required in the scene which is not provided in the character list, you MUST NOT write a character notation for it. Instead you should describe the character in the prompt with words.
@@ -106,10 +106,11 @@ GENERATE_IMAGE_PROMPT_USER = """Generate an image prompt using the following inp
 """
 
 
-DETECT_CHARACTERS_SYSTEM = """You are a professional animation artist working on a story. Lines from a script are provided to you. Your task is to find out the main characters from the story and return a list.
+DETECT_CHARACTERS_SYSTEM = """You are a professional animation artist working on a story. Lines from a script are provided to you. Your task is to find out only the consistent characters from the story and return a list.
 
 RULES:
-- Characters that appear only once or twice can be safely ignored.
+- **DO NOT** include characters that are not present consistently throughout the story. For example, if a character appears only in a couple of lines, you ignore it.
+- You detect only the main characters that are present consistently throughout the story.
 - Mass characters like "CROWD", "PEOPLE", "ONLOOKERS" should be ignored.
 - The description of character should be a simple one line identification. For example, "The main character", "Father of the main character" etc.
 """
@@ -127,7 +128,7 @@ SMART_TRANSCRIPT_SYSTEM = """You are a professional transcriptionist. A sentence
 
 RULES:
 - MUST NOT change any text of input words.
-- For word-level transcript given, the start timestamp of a sentence should be the start timestamp of the first word in the sentence, and the end timestamp should be the end timestamp of the last word in the sentence.
+- Make small meaningful sentences.
 - Remove the ending exclamation mark from every sentence if there is any.
 """
 
@@ -196,7 +197,7 @@ def generate_image_prompt(
     return {"prompt": response.prompt}
 
 def smart_transcript(transcript: str) -> list[TranscriptSentence]:
-    structured_model = model_main.with_structured_output(WordToSentenceTranscript)
+    structured_model = model_dumbass.with_structured_output(SentenceTranscript)
     response = structured_model.invoke([
         {"role": "system", "content": SMART_TRANSCRIPT_SYSTEM},
         {"role": "user", "content": SMART_TRANSCRIPT_USER.format(transcript=transcript)}
