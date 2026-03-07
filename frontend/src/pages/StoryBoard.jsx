@@ -47,8 +47,8 @@ const StoryBoardInner = () => {
                 </div>
 
                 {state.items.length === 0 ? (
-                    <div className="text-center py-10 text-slate-400 flex flex-col items-center gap-3">
-                        <p className="text-sm">Start by adding items.</p>
+                    <div className="text-center py-1 flex flex-col items-center gap-3">
+                        <p className="text-sm text-muted-foreground">Start by adding items.</p>
                         <div className="flex gap-2">
                             <Button
                                 size="sm"
