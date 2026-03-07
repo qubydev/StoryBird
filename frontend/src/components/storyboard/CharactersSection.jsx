@@ -273,8 +273,6 @@ const CharactersSection = () => {
 
     const handleAdd = () => dispatch({ type: 'ADD_CHARACTER' });
 
-    if (characters.length === 0 && state.items.length === 0) return null;
-
     return (
         <div className="mb-6 space-y-4 animate-in slide-in-from-top-4 fade-in duration-300">
             <div className="flex items-center justify-between px-1 border-b border-slate-200 pb-2">
@@ -288,8 +286,8 @@ const CharactersSection = () => {
             </div>
 
             {characters.length === 0 ? (
-                <div className="text-center py-8 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400 text-sm">
-                    No characters added yet. Use "Detect Characters" or add them manually.
+                <div className="text-center py-8 rounded-xl text-muted-foreground text-sm">
+                    Use "Detect Characters" or add them manually.
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

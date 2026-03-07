@@ -40,6 +40,12 @@ const StoryBoardInner = () => {
 
                 <CharactersSection />
 
+                <div className="flex items-center justify-between px-1 border-b border-slate-200 pb-2">
+                    <h3 className="text-sm font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
+                        Story Board
+                    </h3>
+                </div>
+
                 {state.items.length === 0 ? (
                     <div className="text-center py-10 text-slate-400 flex flex-col items-center gap-3">
                         <p className="text-sm">Start by adding items.</p>
