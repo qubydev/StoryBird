@@ -172,7 +172,7 @@ const Scene = ({ scene, index }) => {
                 if (err.refresh) {
                     refreshSessionKey();
                 }
-                throw new Error(err.message || "Failed to generate image");
+                throw new Error(err.error || "Failed to generate image");
             }
 
             const data = await res.json();

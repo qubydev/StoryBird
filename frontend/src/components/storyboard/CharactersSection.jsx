@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from '@/components/ui/dialog';
 import { FaUserPlus, FaTrash, FaUpload, FaUserCircle, FaEdit, FaSpinner } from 'react-icons/fa';
-import { fileToBase64, getStorageItem } from '../../lib/storyboard-utils';
+import { fileToBase64, getStorageItem, refreshSessionKey } from '../../lib/storyboard-utils';
 import toast from 'react-hot-toast';
 
 const CharacterCard = ({ character, index, dispatch }) => {
@@ -63,6 +63,7 @@ const CharacterCard = ({ character, index, dispatch }) => {
 
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
+            if (err.refresh) refreshSessionKey();
             throw new Error(err.error || err.message || "Upload failed");
         }
 

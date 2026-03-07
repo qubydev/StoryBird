@@ -38,10 +38,10 @@ class ImageAspectRatio(str, Enum):
     square = "IMAGE_ASPECT_RATIO_SQUARE"
 
 class GenerateImageRequest(BaseModel):
-    prompt: str
+    prompt: str = Field(..., min_length=1, strip_whitespace=True)
     aspect_ratio: ImageAspectRatio | None = ImageAspectRatio.landscape
     model: Literal["IMAGEN_3_5"] = "IMAGEN_3_5"
-    session_token: str
+    session_token: str = Field(..., min_length=1, strip_whitespace=True)
 
 class CharacterMediaInput(BaseModel):
     name: str = Field(..., min_length=1, strip_whitespace=True)
@@ -49,14 +49,14 @@ class CharacterMediaInput(BaseModel):
     mediaId: str = Field(..., min_length=1, strip_whitespace=True)
 
 class GenerateImageCharsRequest(BaseModel):
-    prompt: str
+    prompt: str = Field(..., min_length=1, strip_whitespace=True)
     characters: List[CharacterMediaInput]
     aspect_ratio: ImageAspectRatio | None = ImageAspectRatio.landscape
-    session_token: str
+    session_token: str = Field(..., min_length=1, strip_whitespace=True)
 
 class UploadImageRequest(BaseModel):
-    rawBytes: str
-    session_token: str
+    rawBytes: str = Field(..., min_length=1, strip_whitespace=True)
+    session_token: str = Field(..., min_length=1, strip_whitespace=True)
 
 class DetectedCharactersRequest(BaseModel):
     title: str

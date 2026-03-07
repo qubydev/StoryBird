@@ -10,18 +10,25 @@ IMAGE_GENERATION_URL = "https://aisandbox-pa.googleapis.com/v1/whisk:generateIma
 IMAGE_RECIPE_URL = "https://aisandbox-pa.googleapis.com/v1/whisk:runImageRecipe"
 UPLOAD_IMAGE_URL = "https://labs.google/fx/api/trpc/backbone.uploadImage"
 REFRESH_STATUSES = [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN]
-
+REFRESH_ERROR_CODES = ["ACCESS_TOKEN_REFRESH_NEEDED"]
 
 # --------------------------------
 # Custom Service Exception
 # --------------------------------
 class WhiskError(Exception):
-    def __init__(self, status_code, message, refresh=False, errors=None):
+    def __init__(self, status_code, message):
         self.status_code = status_code
-        self.message = message
-        self.refresh = refresh
-        self.errors = errors
-        super().__init__(message)
+
+        if status_code in REFRESH_STATUSES:
+            r_client.delete(WHISK_SESSION_TOKEN_KEY)
+            self.message = "Session expired, please set a new session key and try again"
+            self.refresh = True
+        else:
+            self.message = message
+            self.refresh = False
+
+        self._message = message
+        super().__init__(self.message)
 
 
 # --------------------------------
@@ -34,20 +41,36 @@ def fetch_access_token(session_token):
     )
 
     if not resp.ok:
+        # NOTE: This API always returns a 200 status code,
+        # even for errors,
+        # and includes an error message in the response body.
+        message = resp.text or "Unknown error occurred while fetching access token"
         raise WhiskError(
             resp.status_code,
-            f"Failed to fetch access token: {resp.text}",
+            f"Failed to fetch access token: {message}",
         )
 
     data = resp.json()
     access_token = data.get("access_token")
 
+    if data.get("error"):
+        if data["error"] in REFRESH_ERROR_CODES:
+            raise WhiskError(
+                status.HTTP_401_UNAUTHORIZED,
+                "Session expired, please set a new session key and try again",
+            )
+
+        raise WhiskError(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Error fetching access token: {data['error']}",
+        )
+    
     if not access_token:
         raise WhiskError(
-            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
             "Access token not found in response",
         )
-
+    
     return access_token
 
 
@@ -60,23 +83,13 @@ def generate_image(
     model="IMAGEN_3_5",
     session_token=None,
 ):
-    if not session_token:
-        raise WhiskError(
-            status.HTTP_400_BAD_REQUEST,
-            "Session token is required to generate image",
-        )
-
-    if not prompt:
-        raise WhiskError(
-            status.HTTP_400_BAD_REQUEST,
-            "Prompt is required to generate image",
-        )
-
+    # get access token from redis
     access_token = r_client.get(WHISK_SESSION_TOKEN_KEY)
-
     if isinstance(access_token, bytes):
         access_token = access_token.decode("utf-8")
-
+    
+    # access token was not found in redis,
+    # fetch a new one and update redis
     if not access_token:
         access_token = fetch_access_token(session_token)
         r_client.set(WHISK_SESSION_TOKEN_KEY, access_token)
@@ -84,7 +97,8 @@ def generate_image(
         access_token = r_client.get(WHISK_SESSION_TOKEN_KEY)
         if isinstance(access_token, bytes):
             access_token = access_token.decode("utf-8")
-
+    
+    # If still not found, raise an error
     if not access_token:
         raise WhiskError(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -114,16 +128,10 @@ def generate_image(
             message = error_data.get("error", {}).get("message", "Unknown error occurred")
         except ValueError:
             message = response.text or "Unknown error occurred"
-        
-        should_refresh = response.status_code in REFRESH_STATUSES
-        if should_refresh:
-            r_client.delete(WHISK_SESSION_TOKEN_KEY)
 
         raise WhiskError(
             response.status_code,
-            message,
-            refresh=should_refresh,
-            errors=error_data.get("error", {}).get("details", []) if 'error_data' in locals() else []
+            message=message
         )
 
     return response.json()
@@ -138,18 +146,12 @@ def generate_image_with_chars(
     aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE",
     session_token=None,
 ):
-    if not session_token:
+    if "[CHX]" in prompt:
         raise WhiskError(
             status.HTTP_400_BAD_REQUEST,
-            "Session token is required to generate image",
+            "Unlinked character placeholder is not allowed",
         )
-
-    if not prompt:
-        raise WhiskError(
-            status.HTTP_400_BAD_REQUEST,
-            "Prompt is required to generate image",
-        )
-
+    
     matches = re.findall(r'\[CH(\d+)\]', prompt)
 
     unique_chars = []
@@ -173,13 +175,14 @@ def generate_image_with_chars(
         return char_mapping.get(ch_number, "Character")
 
     prompt = re.sub(r'\[CH(\d+)\]', replace_character, prompt)
-    prompt = prompt.replace('[CHX]', 'Character')
 
+    # get access token from redis
     access_token = r_client.get(WHISK_SESSION_TOKEN_KEY)
-
     if isinstance(access_token, bytes):
         access_token = access_token.decode("utf-8")
-
+    
+    # access token was not found in redis,
+    # fetch a new one and update redis
     if not access_token:
         access_token = fetch_access_token(session_token)
         r_client.set(WHISK_SESSION_TOKEN_KEY, access_token)
@@ -187,7 +190,8 @@ def generate_image_with_chars(
         access_token = r_client.get(WHISK_SESSION_TOKEN_KEY)
         if isinstance(access_token, bytes):
             access_token = access_token.decode("utf-8")
-
+    
+    # If still not found, raise an error
     if not access_token:
         raise WhiskError(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -218,16 +222,10 @@ def generate_image_with_chars(
             message = error_data.get("error", {}).get("message", "Unknown error occurred")
         except ValueError:
             message = response.text or "Unknown error occurred"
-        
-        should_refresh = response.status_code in REFRESH_STATUSES
-        if should_refresh:
-            r_client.delete(WHISK_SESSION_TOKEN_KEY)
 
         raise WhiskError(
             response.status_code,
-            message,
-            refresh=should_refresh,
-            errors=error_data.get("error", {}).get("details", []) if 'error_data' in locals() else []
+            message=message
         )
 
     return response.json()
@@ -236,18 +234,6 @@ def generate_image_with_chars(
 # Image Upload
 # --------------------------------
 def upload_image(raw_bytes, session_token):
-    if not session_token:
-        raise WhiskError(
-            status.HTTP_400_BAD_REQUEST,
-            "Session token is required to upload image"
-        )
-    
-    if not raw_bytes:
-        raise WhiskError(
-            status.HTTP_400_BAD_REQUEST,
-            "Raw bytes are required to upload image"
-        )
-
     headers = {
         "Cookie": f"__Secure-next-auth.session-token={session_token}",
         "Content-Type": "application/json"
@@ -261,18 +247,23 @@ def upload_image(raw_bytes, session_token):
             }
         }
     }
+
+    response = requests.post(UPLOAD_IMAGE_URL, json=payload, headers=headers)
+
+    if not response.ok:
+        try:
+            error_data = response.json()
+            message = error_data.get("error", {}).get("message", "Unknown error occurred")
+        except ValueError:
+            message = response.text or "Unknown error occurred"
+
+        raise WhiskError(
+            response.status_code,
+            message=message
+        )
     
     try:
-        res = requests.post(UPLOAD_IMAGE_URL, json=payload, headers=headers)
-        res.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        raise WhiskError(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            f"Upload request failed: {str(e)}"
-        )
-
-    try:
-        data = res.json()
+        data = response.json()
         media_id = data.get("result", {}).get("data", {}).get("json", {}).get("result", {}).get("uploadMediaGenerationId")
         
         if not media_id:
