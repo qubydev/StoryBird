@@ -53,8 +53,8 @@ pytest_cache/
 *.sqlite
 
 # Environment variables
-.env
-.env.*.local
+/.env
+/.env.*.local
 
 # IDEs and editors
 .vscode/
