@@ -3,7 +3,7 @@ export const generateId = () => {
 };
 
 export const getInitialData = () => ({
-    title: "Untitled Storyboard",
+    title: "Untitled",
     items: [],
     selection: [],
     lastSaved: null
@@ -129,7 +129,7 @@ export const getStorageItem = (key) => {
 // IndexedDB Setup for large project files
 const initDB = () => {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('AnimBoardDB', 1);
+        const request = indexedDB.open('StoryBirdDB', 1);
 
         request.onupgradeneeded = (event) => {
             const db = event.target.result;
@@ -150,7 +150,7 @@ export const saveToStorage = async (state) => {
             const transaction = db.transaction('projects', 'readwrite');
             const store = transaction.objectStore('projects');
 
-            const request = store.put(state, 'animboard_project');
+            const request = store.put(state, 'storybird_project');
 
             request.onsuccess = () => resolve(true);
             request.onerror = () => reject(request.error);
@@ -167,7 +167,7 @@ export const loadFromStorage = async () => {
         return new Promise((resolve, reject) => {
             const transaction = db.transaction('projects', 'readonly');
             const store = transaction.objectStore('projects');
-            const request = store.get('animboard_project');
+            const request = store.get('storybird_project');
 
             request.onsuccess = () => resolve(request.result || null);
             request.onerror = () => reject(request.error);

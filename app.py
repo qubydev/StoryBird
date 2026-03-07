@@ -21,7 +21,7 @@ from utils.helpers import error_response
 from utils.whisk import WhiskError
 
 
-app = FastAPI(title="Anim-Board API")
+app = FastAPI(title="StoryBird API")
 
 
 # --------------------------------------------------
@@ -114,9 +114,9 @@ app.include_router(router, prefix="/api")
 dist_path = Path(__file__).parent / "frontend" / "dist"
 
 app.mount(
-    "/static",
+    "/assets",
     StaticFiles(directory=dist_path / "assets"),
-    name="static",
+    name="assets",
 )
 
 
@@ -130,6 +130,12 @@ async def spa_fallback(full_path: str):
             "API route not found",
         )
 
+    # Serve root-level static files (logo.svg, favicon.ico, robots.txt, etc.)
+    static_file = dist_path / full_path
+    if static_file.is_file():
+        return FileResponse(static_file)
+
+    # Fall back to index.html for SPA routing
     index_file = dist_path / "index.html"
 
     if index_file.exists():

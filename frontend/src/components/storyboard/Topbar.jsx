@@ -17,7 +17,7 @@ const TopBar = () => {
                 {/* ROW 1: Title & File Menu + Settings + SuperMenu */}
                 <div className="flex flex-wrap items-center justify-between gap-y-3">
                     <div className="flex items-center gap-4">
-                        <img src="/logo.svg" alt="Logo" className="h-9 w-9" />
+                        <img src="/logo.svg" alt="Logo" className="size-12" />
                         <Input
                             value={state.title}
                             onChange={(e) => dispatch({ type: 'UPDATE_TITLE', payload: e.target.value })}
