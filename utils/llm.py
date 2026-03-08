@@ -41,26 +41,12 @@ class  TranscriptSentence(BaseModel):
 class SentenceTranscript(BaseModel):
     sentences: list[TranscriptSentence] = Field(..., description="A list of sentences with their text and timestamps.")
 
-GENERATE_SCENES_SYSTEM = """You are a professional Storyboard Artist and Cinematographer. 
-Lines from a script with their indices are provided to you. Your task is to break these lines into individual SHOTS (scenes).
+GENERATE_SCENES_SYSTEM = """You are a professional Storyboard Artist and Cinematographer. Lines from a script with their indices and duration are provided to you. Your task is to break these lines into meaningful scenes (shots). Each scene will be represented by a single static image in the story, so you need to group the lines in a way that they can be visually represented together in a single image.
 
 RULES:
-- Lines that can be represented in a single shot should be grouped together in the same scene.
-- If a line describes a change in location, time, or a significant change in action, it should be the start of a new scene.
-- Aim for 1-3 lines per scene, don't exceed the limit of 3 lines in a single scene unless the next line is a direct continuation of the previous one and they both can be represented in a single shot.
-
-EXAMPLE:
-0: "Paris, 1925."
-1: "The city is recovering from the Great War."
-2: "And the Eiffel Tower is rusting."
-3: "Victor Lustig sits in a luxurious hotel suite."
-4: "He reads an article about the tower's high maintenance costs."
-5: "A devious smile crosses his face."
-6: "He has found his next mark."
-7: "The French Government."
-
-Expected Output:
-[[0], [1], [2], [3, 4], [5], [6, 7]]
+- A scene is a group of lines that can be visually represented together in a single image.
+- Keep each scene length close to 5s, not very long or very short.
+- For long lines that exceed 5s duration, you should create a scene with that 1 line only.
 """
 
 GENERATE_SCENES_USER = """Please generate scenes for the following script:
@@ -140,7 +126,7 @@ TRANSCRIPT SRT:
 
 def generate_scenes(title: str, lines: list[dict]) -> list[list[int]]:
     structured_model = model_main.with_structured_output(ScenesWithIndexGroups)
-    formatted_lines = "\n".join([f"{i}: \"{line['text']}\"" for i, line in enumerate(lines)])
+    formatted_lines = "\n".join([f"{i}: \"{line['text']}\" ({line['duration']}s)" for i, line in enumerate(lines)])
 
     response = structured_model.invoke([
         {"role": "system", "content": GENERATE_SCENES_SYSTEM},

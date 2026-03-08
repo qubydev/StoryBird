@@ -89,7 +89,8 @@ const GeneratorControls = () => {
 
             const payload = allSentences.map(s => {
                 return {
-                    text: s.text || ''
+                    text: s.text || '',
+                    duration: (s.end - s.start)
                 };
             });
 
