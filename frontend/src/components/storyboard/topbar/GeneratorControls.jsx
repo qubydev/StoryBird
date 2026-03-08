@@ -174,6 +174,10 @@ const GeneratorControls = () => {
                 try {
                     dispatch({ type: 'UPDATE_SCENE_META', payload: { id: item.id, field: 'promptGenStatus', value: 'generating' } });
 
+                    if (!state.title.trim() || state.title.trim() === 'Untitled') {
+                        return toast.error("Please provide a title for your storyboard to get the best results.", { id: toastId });
+                    }
+
                     const res = await fetch(`${backendUrl}/api/generate-image-prompt`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },

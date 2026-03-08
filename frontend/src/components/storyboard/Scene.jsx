@@ -227,6 +227,10 @@ const Scene = ({ scene, index }) => {
             const sceneText = scene.sentences.map(s => s.text).join(' ').trim();
             if (!sceneText) throw new Error("Scene has no text");
 
+            if (!state.title.trim() || state.title.trim() === 'Untitled') {
+                return toast.error("Please provide a title for your storyboard to get the best results.", { id: toastId });
+            }
+
             const backendUrl = import.meta.env.VITE_BACKEND_URL;
             const res = await fetch(`${backendUrl}/api/generate-image-prompt`, {
                 method: 'POST',
