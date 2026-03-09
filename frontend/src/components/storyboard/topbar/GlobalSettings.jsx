@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
@@ -27,6 +27,11 @@ export const GlobalSettings = () => {
 
     const [instructionsText, setInstructionsText] = useState(instructions || "");
     const [sessionText, setSessionText] = useState(sessionKey || "");
+
+    useEffect(() => {
+        setInstructionsText(instructions || "");
+        setSessionText(sessionKey || "");
+    }, [sessionKey, instructions])
 
     const saveInstructions = () => {
         const finalValue = instructionsText.trim();
