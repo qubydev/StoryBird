@@ -7,11 +7,13 @@ import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from '
 import { FaUserPlus, FaTrash, FaUpload, FaUserCircle, FaEdit, FaSpinner } from 'react-icons/fa';
 import { fileToBase64, getStorageItem, refreshSessionKey } from '../../lib/storyboard-utils';
 import toast from 'react-hot-toast';
+import { useSettings } from '@/context/SettingsContext';
 
 const CharacterCard = ({ character, index, dispatch }) => {
     const [isEditOpen, setIsEditOpen] = useState(false);
     const [isUploadingEdit, setIsUploadingEdit] = useState(false);
     const [isUploadingDirect, setIsUploadingDirect] = useState(false);
+    const { sessionKey } = useSettings();
 
     const [editState, setEditState] = useState({
         name: '',
@@ -44,8 +46,7 @@ const CharacterCard = ({ character, index, dispatch }) => {
     };
 
     const performUpload = async (file) => {
-        const sessionData = getStorageItem('sb_global_session_key');
-        if (!sessionData || !sessionData.text) {
+        if (!sessionKey) {
             throw new Error("Session Key is missing. Please add it in Global Settings.");
         }
 
@@ -57,7 +58,7 @@ const CharacterCard = ({ character, index, dispatch }) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 rawBytes: base64,
-                session_token: sessionData.text
+                session_token: sessionKey
             })
         });
 

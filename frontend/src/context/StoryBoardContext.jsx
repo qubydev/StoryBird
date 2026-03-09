@@ -313,6 +313,17 @@ const reducer = (state, action) => {
                 isDirty: true
             };
 
+        case 'UPDATE_SCENE_META_V2':
+            return {
+                ...state,
+                items: state.items.map(i =>
+                    i.id === action.payload.id
+                        ? { ...i, ...action.payload.updates }
+                        : i
+                ),
+                isDirty: true
+            };
+
         case 'ADD_SENTENCE': {
             const maxEnd = getMaxEndTime(state.items);
             const startStr = parseFloat((maxEnd > 0 ? maxEnd + 0.1 : 0).toFixed(3));

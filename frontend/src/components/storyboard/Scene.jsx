@@ -9,33 +9,33 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogTrigger, DialogTitle, DialogHeader } from '@/components/ui/dialog';
 import { FaImage, FaMagic, FaTrash, FaUpload, FaDownload, FaPlus, FaCopy, FaPen, FaUnlink, FaEraser, FaExpand, FaSpinner, FaCheck, FaEdit } from 'react-icons/fa';
 import toast from 'react-hot-toast';
+import { useSettings } from '@/context/SettingsContext';
+import { MdCancel } from 'react-icons/md';
+
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 
 const Scene = ({ scene, index }) => {
     const { state, dispatch } = useStoryBoard();
+    const { sessionKey, setSessionKey, instructions } = useSettings();
+
     const [isGeneratingImg, setIsGeneratingImg] = useState(false);
     const [isGeneratingTxt, setIsGeneratingTxt] = useState(false);
-
     const [isEditingPrompt, setIsEditingPrompt] = useState(false);
+
     const [localPrompt, setLocalPrompt] = useState(scene.prompt || "");
     const [linkDialog, setLinkDialog] = useState(null);
 
-    const [lastGeneratedPrompt, setLastGeneratedPrompt] = useState(scene.image ? scene.prompt : null);
     const { start, end } = getSceneDuration(scene.sentences);
 
     const isGlobalGenerating = scene.imageGenStatus === 'generating';
-    const isGlobalQueued = scene.imageGenStatus === 'queued';
-    const isBusy = isGeneratingImg || isGlobalGenerating || isGlobalQueued;
+    const isBusy = isGeneratingImg || isGlobalGenerating;
     const isPromptBusy = isGeneratingTxt || scene.promptGenStatus === 'generating';
 
-    useEffect(() => {
-        if (!scene.image) {
-            setLastGeneratedPrompt(null);
-        }
-    }, [scene.image]);
-
+    // When user is editing the prompt,
+    // we better not let it be overwritten by external changes
     useEffect(() => {
         if (!isEditingPrompt) {
-            setLocalPrompt(scene.prompt || "");
+            setLocalPrompt(scene.prompt);
         }
     }, [scene.prompt, isEditingPrompt]);
 
@@ -45,10 +45,9 @@ const Scene = ({ scene, index }) => {
             try {
                 const base64String = await fileToBase64(file);
                 dispatch({
-                    type: 'UPDATE_SCENE_META',
-                    payload: { id: scene.id, field: 'image', value: base64String }
+                    type: 'UPDATE_SCENE_META_V2',
+                    payload: { id: scene.id, updates: { image: base64String } }
                 });
-                setLastGeneratedPrompt(scene.prompt);
                 toast.success("Uploaded");
             } catch (err) {
                 toast.error("Error uploading image");
@@ -67,96 +66,103 @@ const Scene = ({ scene, index }) => {
     };
 
     const handleDeleteImage = () => {
-        dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'image', value: null } });
-        setLastGeneratedPrompt(null);
+        dispatch({ type: 'UPDATE_SCENE_META_V2', payload: { id: scene.id, updates: { image: null } } });
     };
 
-    const handleCleanScene = () => {
-        dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, updates: { image: null, prompt: "", subjectMediaIds: [], characterMap: {} } } });
-        setLastGeneratedPrompt(null);
-        toast.success("Scene cleaned");
+    const handleCleanPrompt = () => {
+        if (isEditingPrompt) {
+            return toast.error("Can not clean prompt while editing.");
+        }
+        dispatch({ type: 'UPDATE_SCENE_META_V2', payload: { id: scene.id, updates: { prompt: "", subjectMediaIds: [], characterMap: {} } } });
+        toast.success("Prompt cleaned");
     };
 
     const handleSavePrompt = () => {
-        const newMap = { ...(scene.characterMap || {}) };
-        let finalPrompt = localPrompt;
-        const matches = localPrompt.match(/\[CH(?:\d+|X)\]/g) || [];
+        const newCharacterMap = {};
+        let localPromptCopy = localPrompt;
 
+        // [CHd+]
+        const matches = localPromptCopy.match(/\[CH\d+\]/g) || [];
         matches.forEach(tag => {
-            if (tag !== '[CHX]') {
-                if (!newMap[tag]) {
-                    const num = parseInt(tag.replace(/\D/g, ''), 10) - 1;
-                    if (!isNaN(num) && state.characters && state.characters[num]) {
-                        newMap[tag] = state.characters[num].id;
-                    } else {
-                        finalPrompt = finalPrompt.split(tag).join('[CHX]');
-                    }
-                } else {
-                    const charExists = state.characters?.some(c => c.id === newMap[tag]);
-                    if (!charExists) {
-                        finalPrompt = finalPrompt.split(tag).join('[CHX]');
-                        delete newMap[tag];
-                    }
-                }
+            const chNum = parseInt(tag.replace(/\D/g, ''), 10);
+            if (state.characters && state.characters[chNum - 1]) {
+                newCharacterMap[tag] = state.characters[chNum - 1].id;
+            } else {
+                localPromptCopy = localPromptCopy.split(tag).join('[CHX]');
             }
+        });
+
+        // [CHX]
+        const xMatches = localPromptCopy.match(/\[CHX\]/g) || [];
+        xMatches.forEach(tag => {
+            newCharacterMap[tag] = null;
         });
 
         dispatch({
-            type: 'UPDATE_SCENE_META',
-            payload: { id: scene.id, updates: { prompt: finalPrompt, characterMap: newMap } }
+            type: 'UPDATE_SCENE_META_V2',
+            payload: { id: scene.id, updates: { prompt: localPromptCopy, characterMap: newCharacterMap } }
         });
-        setLocalPrompt(finalPrompt);
+        setLocalPrompt(localPromptCopy);
         setIsEditingPrompt(false);
     };
 
+    const handleCancelPrompt = () => {
+        setLocalPrompt(scene.prompt);
+        setIsEditingPrompt(false);
+    }
+
     const handleGenerateImage = async () => {
-        if (!scene.prompt) return toast.error("Enter a prompt first");
+        if (!scene.prompt.trim()) return toast.error("Enter a prompt first");
 
-        if (scene.prompt.includes('[CHX]')) {
-            return toast.error("Error: Prompt contains unlinked character [CHX]");
-        }
+        // Verify charactersMap
+        if (scene.characterMap) {
+            for (const [tag, charId] of Object.entries(scene.characterMap)) {
+                if (charId === null) {
+                    return toast.error(`Prompt contains unlinked character ${tag}.`);
+                }
 
-        const allStateCharacters = state.characters || [];
-        const promptTags = scene.prompt.match(/\[CH(?:\d+)\]/g) || [];
-        for (const tag of promptTags) {
-            const charId = scene.characterMap?.[tag];
-            const character = allStateCharacters.find(c => c.id === charId);
-            if (character && !character.mediaId) {
-                return toast.error(`Error: Linked character "${character.name || tag}" is missing an uploaded image.`);
+                // Make sure charId is valid
+                const idx = state.characters.findIndex(c => c.id === charId);
+                const character = state.characters[idx];
+
+                if (!character) {
+                    return toast.error(`Prompt contains invalid character link ${tag}.`);
+                }
+
+                if (!character.name?.trim()) {
+                    return toast.error(`Please set a name to character ${idx + 1}`)
+                }
+                if (!character.description?.trim()) {
+                    return toast.error(`Please set a description to character ${idx + 1}`)
+                }
+                if (!character.mediaId) {
+                    return toast.error(`Linked character ${idx + 1} is missing an media upload ID.`);
+                }
             }
         }
 
-        const sessionData = getStorageItem('sb_global_session_key');
-        if (!sessionData.text) {
+        if (!sessionKey) {
             return toast.error("Session Key is missing. Please add it first.");
         }
-
         setIsGeneratingImg(true);
         const toastId = toast.loading("Generating image...");
+
         try {
-            const backendUrl = import.meta.env.VITE_BACKEND_URL;
-
-            const matches = scene.prompt.match(/\[CH(?:\d+|X)\]/g) || [];
-            const subjectIds = matches.map(tag => {
-                const charId = scene.characterMap?.[tag];
-                const character = allStateCharacters.find(c => c.id === charId);
-                return character ? character.mediaId : null;
-            }).filter(Boolean);
-
-            let endpoint = `${backendUrl}/api/generate-image`;
-            let reqBody = {
+            let endpoint = `${BACKEND_URL}/api/generate-image`;
+            let payload = {
                 prompt: scene.prompt,
-                session_token: sessionData.text,
+                session_token: sessionKey,
             };
 
-            if (subjectIds.length > 0) {
-                endpoint = `${backendUrl}/api/generate-image-chars`;
-                reqBody.characters = subjectIds.map(id => {
-                    const c = allStateCharacters.find(ch => ch.mediaId === id);
+
+            if (scene.characterMap && Object.keys(scene.characterMap).length > 0) {
+                endpoint = `${BACKEND_URL}/api/generate-image-chars`;
+                payload.characters = Object.entries(scene.characterMap).map(([tag, charId]) => {
+                    const character = state.characters.find(c => c.id === charId);
                     return {
-                        name: c ? (c.name || 'Unknown Character') : 'Unknown Character',
-                        description: c ? (c.description || 'Character') : 'Character',
-                        mediaId: id
+                        name: character.name,
+                        description: character.description,
+                        mediaId: character.mediaId
                     };
                 });
             }
@@ -164,13 +170,13 @@ const Scene = ({ scene, index }) => {
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(reqBody)
+                body: JSON.stringify(payload)
             });
 
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 if (err.refresh) {
-                    refreshSessionKey();
+                    setSessionKey("");
                 }
                 throw new Error(err.error || "Failed to generate image");
             }
@@ -183,8 +189,15 @@ const Scene = ({ scene, index }) => {
             }
 
             if (returnedImage) {
-                dispatch({ type: 'UPDATE_SCENE_META', payload: { id: scene.id, field: 'image', value: returnedImage } });
-                setLastGeneratedPrompt(scene.prompt);
+                dispatch({
+                    type: 'UPDATE_SCENE_META_V2',
+                    payload: {
+                        id: scene.id,
+                        updates: {
+                            image: returnedImage
+                        }
+                    }
+                });
                 toast.success("Image Generated", { id: toastId });
             } else {
                 throw new Error("No valid image data found in the response");
@@ -199,46 +212,53 @@ const Scene = ({ scene, index }) => {
     };
 
     const handleGeneratePrompt = async () => {
-        const instData = getStorageItem('sb_global_instructions');
+        const sceneText = scene.sentences.map(s => s.text).join(' ').trim();
+        if (!sceneText) return toast.error("Scene has no text");
+
+        if (!state.title.trim() || state.title.trim() === 'Untitled') {
+            return toast.error("Please provide a title for your storyboard to get the best results.");
+        }
+
+        // Validate characters
+        state.characters.forEach((ch, idx) => {
+            if (!ch.name.trim()) {
+                return toast.error(`Please set a name for character "${idx + 1}"`);
+            }
+            if (!ch.description.trim()) {
+                return toast.error(`Please set a description for character ${idx + 1}`);
+            }
+        });
 
         const sceneIndex = state.items.findIndex(i => i.id === scene.id);
         const previousScenes = state.items.slice(0, sceneIndex).filter(i => i.type === 'scene');
         const last10Scenes = previousScenes.slice(-10);
+        const lastScene = sceneIndex > 0 ? state.items[sceneIndex - 1] : null;
 
-        const previousScenesPayload = last10Scenes.reduce((acc, s) => {
-            if (s.prompt && s.prompt.trim()) {
-                acc.push({
-                    scene_lines: s.sentences.map(sent => sent.text).join(' ').trim(),
-                    prompt: s.prompt
-                });
-            }
-            return acc;
-        }, []);
+        if (lastScene && !lastScene.prompt.trim()) {
+            return toast.error("Previous scene's prompt must be generated first.");
+        }
 
-        const activeCharacters = (state.characters || []).filter(c => c.mediaId);
-        const charactersPayload = activeCharacters.length > 0 ? activeCharacters.map(c => ({
-            name: c.name || 'Unknown Character',
-            description: c.description || 'character'
-        })) : null;
+        const previousScenesPayload = last10Scenes.map(s => ({
+            scene_lines: (s.sentences.map(sent => sent.text).join(' ').trim()) || "",
+            prompt: s.prompt.trim() || "No prompt provided"
+        }))
+
+        const charactersPayload = state.characters.map(c => ({
+            name: c.name,
+            description: c.description
+        }));
 
         setIsGeneratingTxt(true);
         const toastId = toast.loading("Generating prompt...");
+
         try {
-            const sceneText = scene.sentences.map(s => s.text).join(' ').trim();
-            if (!sceneText) throw new Error("Scene has no text");
-
-            if (!state.title.trim() || state.title.trim() === 'Untitled') {
-                return toast.error("Please provide a title for your storyboard to get the best results.", { id: toastId });
-            }
-
-            const backendUrl = import.meta.env.VITE_BACKEND_URL;
-            const res = await fetch(`${backendUrl}/api/generate-image-prompt`, {
+            const res = await fetch(`${BACKEND_URL}/api/generate-image-prompt`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    title: state.title || 'Untitled',
+                    title: state.title,
                     scene_lines: sceneText,
-                    instructions: instData.text ? instData.text : null,
+                    instructions: instructions.trim() || null,
                     previous_scenes: previousScenesPayload.length > 0 ? previousScenesPayload : null,
                     characters: charactersPayload
                 })
@@ -251,37 +271,35 @@ const Scene = ({ scene, index }) => {
 
             const data = await res.json();
             if (data.prompt) {
+                const newCharacterMap = {};
+                let promptCopy = data.prompt;
 
-                const newMap = { ...(scene.characterMap || {}) };
-                let finalPrompt = data.prompt;
-                const matches = data.prompt.match(/\[CH(?:\d+|X)\]/g) || [];
-
+                // [CHd+]
+                const matches = promptCopy.match(/\[CH\d+\]/g) || [];
                 matches.forEach(tag => {
-                    if (tag !== '[CHX]') {
-                        const num = parseInt(tag.replace(/\D/g, ''), 10) - 1;
-                        if (activeCharacters[num]) {
-                            newMap[tag] = activeCharacters[num].id;
-                        } else {
-                            finalPrompt = finalPrompt.split(tag).join('[CHX]');
-                        }
+                    const chNum = parseInt(tag.replace(/\D/g, ''), 10);
+                    if (state.characters && state.characters[chNum - 1]) {
+                        newCharacterMap[tag] = state.characters[chNum - 1].id;
+                    } else {
+                        promptCopy = promptCopy.split(tag).join('[CHX]');
                     }
+                });
+
+                // [CHX]
+                const xMatches = promptCopy.match(/\[CHX\]/g) || [];
+                xMatches.forEach(tag => {
+                    newCharacterMap[tag] = null;
                 });
 
                 dispatch({
-                    type: 'UPDATE_SCENE_META',
-                    payload: {
-                        id: scene.id,
-                        updates: {
-                            prompt: finalPrompt,
-                            subjectMediaIds: data.subject_media_ids || [],
-                            characterMap: newMap
-                        }
-                    }
+                    type: 'UPDATE_SCENE_META_V2',
+                    payload: { id: scene.id, updates: { prompt: promptCopy, characterMap: newCharacterMap } }
                 });
-                toast.success("Prompt Generated", { id: toastId });
             } else {
                 throw new Error("No prompt returned");
             }
+
+            toast.success("Prompt generated", { id: toastId });
 
         } catch (e) {
             console.error(e);
@@ -295,7 +313,7 @@ const Scene = ({ scene, index }) => {
         const text = scene.sentences.map(s => s.text).join('\n');
         if (!text.trim()) { toast.error("No text"); return; }
         navigator.clipboard.writeText(text);
-        toast.success("Scene text copied");
+        toast.success("Scene lines copied");
     };
 
     const handleUngroup = () => {
@@ -303,41 +321,50 @@ const Scene = ({ scene, index }) => {
     };
 
     const handleUpdateLink = (tag, charId) => {
-        let newPrompt = scene.prompt || "";
-        const newMap = { ...(scene.characterMap || {}) };
-        let newTag = tag;
-
+        let newtag = '';
         if (charId === null) {
-            newTag = '[CHX]';
-            delete newMap[tag];
+            newtag = '[CHX]';
         } else {
-            const charIndex = state.characters?.findIndex(c => c.id === charId);
-            if (charIndex !== -1) {
-                newTag = `[CH${charIndex + 1}]`;
-                newMap[newTag] = charId;
-
-                if (newTag !== tag) {
-                    delete newMap[tag];
-                }
+            const idx = state.characters?.findIndex(c => c.id === charId);
+            if (idx == -1) {
+                return toast.error("Character not found");
             }
+            const newTag = `[CH${idx + 1}]`;
+            newtag = newTag;
         }
 
-        if (newTag !== tag) {
-            newPrompt = newPrompt.split(tag).join(newTag);
+        let promptCopy = scene.prompt || "";
+        const newCharacterMap = {};
+
+        const match = promptCopy.match(new RegExp(`\\${tag}(?!\\d)`, 'g'));
+        if (!match) {
+            return toast.error("Tag not found in prompt");
         }
 
-        dispatch({
-            type: 'UPDATE_SCENE_META',
-            payload: {
-                id: scene.id,
-                updates: {
-                    prompt: newPrompt,
-                    characterMap: newMap
-                }
+        promptCopy = promptCopy.replace(new RegExp(`\\${tag}(?!\\d)`), newtag);
+
+        // [CHd+]
+        const matches = promptCopy.match(/\[CH\d+\]/g) || [];
+        matches.forEach(t => {
+            const chNum = parseInt(t.replace(/\D/g, ''), 10);
+            if (state.characters && state.characters[chNum - 1]) {
+                newCharacterMap[t] = state.characters[chNum - 1].id;
+            } else {
+                promptCopy = promptCopy.split(t).join('[CHX]');
             }
         });
 
-        setLocalPrompt(newPrompt);
+        // [CHX]
+        const xMatches = promptCopy.match(/\[CHX\]/g) || [];
+        xMatches.forEach(t => {
+            newCharacterMap[t] = null;
+        });
+
+        dispatch({
+            type: 'UPDATE_SCENE_META_V2',
+            payload: { id: scene.id, updates: { prompt: promptCopy, characterMap: newCharacterMap } }
+        });
+        setLocalPrompt(promptCopy);
         setLinkDialog(null);
     };
 
@@ -380,7 +407,6 @@ const Scene = ({ scene, index }) => {
         });
     };
 
-    const isImageGenDisabled = isBusy || (!!scene.image && scene.prompt === lastGeneratedPrompt);
 
     return (
         <Card className="overflow-hidden border-slate-200 shadow-sm transition-shadow relative">
@@ -458,7 +484,7 @@ const Scene = ({ scene, index }) => {
                                 <div className="absolute inset-0 bg-white/80 backdrop-blur-[2px] flex flex-col items-center justify-center z-20">
                                     <FaSpinner className="animate-spin text-purple-600 mb-2" size={24} />
                                     <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">
-                                        {isGlobalQueued ? "Queued" : "Generating"}
+                                        Generating
                                     </span>
                                 </div>
                             )}
@@ -511,20 +537,13 @@ const Scene = ({ scene, index }) => {
 
                     <div className="w-full md:w-2/3 pl-0 md:pl-4 pt-4 md:pt-0 flex flex-col gap-2 relative">
                         {isEditingPrompt ? (
-                            <div className="relative">
-                                <Textarea
-                                    value={localPrompt}
-                                    onChange={(e) => setLocalPrompt(e.target.value)}
-                                    className="text-xs resize-none bg-white h-24 focus-visible:ring-1 pr-10"
-                                    placeholder="Enter image prompt here... Use [CH1], [CH2] etc. to link characters."
-                                    autoFocus
-                                />
-                                <div className="absolute bottom-2 right-2 flex gap-1">
-                                    <Button size="icon" className="h-6 w-6 bg-blue-600 hover:bg-blue-700 text-white" onClick={handleSavePrompt}>
-                                        <FaCheck size={10} />
-                                    </Button>
-                                </div>
-                            </div>
+                            <Textarea
+                                value={localPrompt}
+                                onChange={(e) => setLocalPrompt(e.target.value)}
+                                className="text-xs resize-none bg-white h-24 focus-visible:ring-1 pr-10"
+                                placeholder="Enter image prompt here... Use [CH1], [CH2] etc. to link characters."
+                                autoFocus
+                            />
                         ) : (
                             <div className="relative h-24 bg-white border border-slate-200 rounded-md p-3 text-xs overflow-y-auto whitespace-pre-wrap">
                                 {renderPromptWithLinks()}
@@ -532,30 +551,41 @@ const Scene = ({ scene, index }) => {
                         )}
 
                         <div className="flex flex-wrap gap-2">
-                            <Button size="sm" className={`h-7 text-xs text-white ${isImageGenDisabled ? 'bg-slate-400' : 'bg-purple-600 hover:bg-purple-700'}`} onClick={handleGenerateImage} disabled={isImageGenDisabled} title={isImageGenDisabled ? "Change prompt to regenerate" : "Generate Image"}>
+                            <Button size="sm" className={`h-7 text-xs text-white ${isBusy ? 'bg-slate-400' : 'bg-purple-600 hover:bg-purple-700'}`} onClick={handleGenerateImage} disabled={isBusy} title={isBusy ? "Change prompt to regenerate" : "Generate Image"}>
                                 {isBusy ? "..." : <><FaMagic className="mr-1" /> Gen Image</>}
                             </Button>
                             <Button size="sm" variant="outline" className="h-7 text-xs text-slate-600" onClick={handleGeneratePrompt} disabled={isPromptBusy}>
                                 {isPromptBusy ? "..." : <><FaPen className="mr-1" /> Gen Prompt</>}
                             </Button>
 
-                            {!isEditingPrompt && (
+                            {isEditingPrompt ? (
+                                <>
+                                    <Button size="sm" variant="outline" className="h-7 text-xs text-slate-600" onClick={handleSavePrompt}>
+                                        <FaCheck className="mr-1" /> Save
+                                    </Button>
+                                    <Button size="sm" variant="outline" className="h-7 text-xs text-slate-600" onClick={handleCancelPrompt}>
+                                        <MdCancel className="mr-1" /> Cancel
+                                    </Button>
+                                </>
+                            ) : (
                                 <Button size="sm" variant="outline" className="h-7 text-xs text-slate-600" onClick={() => setIsEditingPrompt(true)}>
                                     <FaEdit className="mr-1" /> Edit
                                 </Button>
                             )}
 
-                            <Button size="sm" variant="outline" className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50 border-red-100" onClick={handleCleanScene} title="Clear Prompt & Image">
+                            <Button size="sm" variant="outline" className="ml-auto h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50 border-red-100" onClick={handleCleanPrompt} title="Clear Prompt & Image">
                                 <FaEraser className="mr-1" /> Clean
-                            </Button>
-                            <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-400 ml-auto" onClick={handleCopyScript} title="Copy text">
-                                <FaCopy />
                             </Button>
                         </div>
                     </div>
                 </div>
 
                 <div className="p-4 bg-white">
+                    <div className='flex items-center justify-end'>
+                        <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-400" onClick={handleCopyScript}>
+                            <FaCopy />
+                        </Button>
+                    </div>
                     <div className="space-y-0">
                         {scene.sentences.map(sent => (
                             <Sentence key={sent.id} sentence={sent} sceneId={scene.id} isNested={true} />
