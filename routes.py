@@ -1,4 +1,5 @@
 import json
+import asyncio
 from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -153,15 +154,6 @@ async def _export_video(
     file: UploadFile = File(...),
     audio: Optional[UploadFile] = File(None),
 ):
-    """
-    Accepts a project JSON file + optional audio file via multipart/form-data.
-    Streams Server-Sent Events (SSE) with progress, then the final base64 MP4.
-
-    SSE event shapes:
-        data: {"status": "processing", "progress": <0-99>}
-        data: {"status": "done", "video_data": "<base64 mp4>"}
-        data: {"status": "error", "error": "<message>"}
-    """
     json_bytes = await file.read()
     try:
         project_json = json.loads(json_bytes)
@@ -177,12 +169,24 @@ async def _export_video(
         audio_filename = audio.filename
 
     async def event_stream():
-        for event in export_video_generator(
+        # Initialize the async generator
+        gen = export_video_generator(
             project_json=project_json,
             audio_bytes=audio_bytes,
             audio_filename=audio_filename,
-        ):
-            yield f"data: {json.dumps(event)}\n\n"
+        )
+        
+        while True:
+            try:
+                # Wait for the next log message, but timeout every 15 seconds
+                event = await asyncio.wait_for(gen.__anext__(), timeout=15.0)
+                yield f"data: {json.dumps(event)}\n\n"
+            except StopAsyncIteration:
+                # The generator finished normally
+                break
+            except asyncio.TimeoutError:
+                # FFMPEG is still working on a long scene, send a keep-alive ping!
+                yield ": keep-alive\n\n"
 
     return StreamingResponse(
         event_stream(),
@@ -190,6 +194,7 @@ async def _export_video(
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            "Connection": "keep-alive"
         },
     )
 

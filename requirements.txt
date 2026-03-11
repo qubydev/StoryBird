@@ -3,4 +3,5 @@ uvicorn
 redis
 langchain-groq
 langchain-openai
+langchain-deepseek
 pillow
