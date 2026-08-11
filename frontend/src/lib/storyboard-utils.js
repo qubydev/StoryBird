@@ -117,6 +117,20 @@ export const fileToBase64 = (file) => {
     });
 };
 
+export const getStorageItem = (key) => {
+    try {
+        const item = localStorage.getItem(key);
+        return item ? JSON.parse(item) : { text: '', enabled: true };
+    } catch {
+        return { text: '', enabled: true };
+    }
+};
+
+export const refreshSessionKey = () => {
+    localStorage.removeItem('sb_global_session_key');
+    window.dispatchEvent(new Event('session_key_changed'));
+};
+
 // IndexedDB Setup for large project files
 const initDB = () => {
     return new Promise((resolve, reject) => {

@@ -1,46 +1,92 @@
-import os
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+load_dotenv()
 
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
-from langchain_deepseek import ChatDeepSeek
+import os
+import re
+import threading
+from pydantic import BaseModel, Field
 
-load_dotenv()
-
-DEEPSEEK_OUTPUT_TOKENS_LIMIT = 800
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 LONGCAT_API_KEY = os.getenv("LONGCAT_API_KEY")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
-# All required keys validation
-if not GROQ_API_KEY:
-    raise ValueError("GROQ_API_KEY is not set in .env")
-if not LONGCAT_API_KEY:
-    raise ValueError("LONGCAT_API_KEY is not set in .env")
-if not DEEPSEEK_API_KEY:
-    raise ValueError("DEEPSEEK_API_KEY is not set in .env")
 
-# --- Model Initializations ---
+def _load_groq_api_keys() -> list[str]:
+    """Return GROQ_API_KEY plus numbered GROQ_API_KEY_N variables in order."""
+    numbered_keys = []
+    for name, value in os.environ.items():
+        match = re.fullmatch(r"GROQ_API_KEY_(\d+)", name)
+        if match and value:
+            numbered_keys.append((int(match.group(1)), value))
 
-model_pro = ChatDeepSeek(
-    api_key=DEEPSEEK_API_KEY,
-    model="deepseek-chat",
-    max_tokens=DEEPSEEK_OUTPUT_TOKENS_LIMIT
-)
+    keys = [value for _, value in sorted(numbered_keys)]
+    default_key = os.getenv("GROQ_API_KEY")
+    if default_key:
+        keys.insert(0, default_key)
 
-model_base = ChatGroq(
-    api_key=GROQ_API_KEY,
-    model="llama-3.3-70b-versatile"
-)
+    # A repeated environment value should not cause a pointless retry.
+    return list(dict.fromkeys(keys))
 
-model_mass = ChatOpenAI(
+
+def _is_rate_limit_error(error: Exception) -> bool:
+    """Handle SDK, HTTP-client, and wrapped LangChain rate-limit exceptions."""
+    status_code = getattr(error, "status_code", None)
+    response = getattr(error, "response", None)
+    status_code = status_code or getattr(response, "status_code", None)
+    if status_code == 429:
+        return True
+
+    message = str(error).lower()
+    return "rate limit" in message or "rate_limit" in message or "too many requests" in message
+
+
+class GroqKeyPool:
+    """Round-robin Groq clients and retry a request with another key on HTTP 429."""
+
+    def __init__(self, api_keys: list[str]):
+        if not api_keys:
+            raise RuntimeError(
+                "No Groq API keys configured. Add GROQ_API_KEY or GROQ_API_KEY_1, "
+                "GROQ_API_KEY_2, etc. to .env."
+            )
+        self._api_keys = api_keys
+        self._next_key_index = 0
+        self._lock = threading.Lock()
+
+    def _next_key(self) -> str:
+        # This also keeps concurrent FastAPI requests from selecting the same key
+        # just because they started at the same time.
+        with self._lock:
+            key = self._api_keys[self._next_key_index]
+            self._next_key_index = (self._next_key_index + 1) % len(self._api_keys)
+            return key
+
+    def invoke_structured(self, schema: type[BaseModel], messages: list[dict]):
+        last_rate_limit_error = None
+        for _ in range(len(self._api_keys)):
+            model = ChatGroq(
+                api_key=self._next_key(),
+                model="llama-3.3-70b-versatile",
+            ).with_structured_output(schema)
+            try:
+                return model.invoke(messages)
+            except Exception as error:
+                if not _is_rate_limit_error(error):
+                    raise
+                last_rate_limit_error = error
+
+        # Every configured key was rate limited; preserve the provider's useful
+        # error instead of turning it into an unrelated server error.
+        raise last_rate_limit_error
+
+
+groq_key_pool = GroqKeyPool(_load_groq_api_keys())
+
+model_dumbass = ChatOpenAI(
     base_url="https://api.longcat.chat/openai",
     api_key=LONGCAT_API_KEY,
     model="LongCat-Flash-Chat"
 )
-
-# --- Pydantic Schemas ---
 
 class ScenesWithIndexGroups(BaseModel):
     scenes: list[list[int]] = Field(..., description="list of list of line indices, groupped into scenes.")
@@ -55,7 +101,7 @@ class Character(BaseModel):
 class DetectedCharacters(BaseModel):
     characters: list[Character] = Field(..., description="A list of characters detected in the story.")
 
-class TranscriptSentence(BaseModel):
+class  TranscriptSentence(BaseModel):
     text: str = Field(..., description="The text of the sentence.")
     start: str = Field(..., description="The start timestamp of the sentence in the format 00:00:00,000")
     end: str = Field(..., description="The end timestamp of the sentence in the format 00:00:00,000")
@@ -63,52 +109,55 @@ class TranscriptSentence(BaseModel):
 class SentenceTranscript(BaseModel):
     sentences: list[TranscriptSentence] = Field(..., description="A list of sentences with their text and timestamps.")
 
-# --- Prompts ---
+GENERATE_SCENES_SYSTEM = """You are a professional Storyboard Artist and Cinematographer. 
+Lines from a script with their indices are provided to you. Your task is to break these lines into individual SHOTS (scenes).
 
-GENERATE_SCENES_SYSTEM = """You are an expert Storyboard Artist and Cinematographer. You are provided with script lines, their indices, and their audio durations. Your task is to group these lines into small groups (scenes) that can be visually represented together in a single image.
+RULES:
+- Lines that can be represented in a single shot should be grouped together in the same scene.
+- If a line describes a change in location, time, or a significant change in action, it should be the start of a new scene.
+- Aim for 1-3 lines per scene, don't exceed the limit of 3 lines in a single scene unless the next line is a direct continuation of the previous one and they both can be represented in a single shot.
 
-STRICT RULES:
-1. Strictly try to keep cumulative duration of each scene around 5 seconds. (**DO NOT EXCEED THE LIMIT**)
-2. Do not group more than 3 lines together in a single scene, even if the lines are representing the same scene.
-3. For longer lines with more than 5 seconds duration, create a scene with just that one line. Do not group it with other lines, even if they are visually related.
+EXAMPLE:
+0: "Paris, 1925."
+1: "The city is recovering from the Great War."
+2: "And the Eiffel Tower is rusting."
+3: "Victor Lustig sits in a luxurious hotel suite."
+4: "He reads an article about the tower's high maintenance costs."
+5: "A devious smile crosses his face."
+6: "He has found his next mark."
+7: "The French Government."
+
+Expected Output:
+[[0], [1], [2], [3, 4], [5], [6, 7]]
 """
 
-GENERATE_SCENES_USER = """Generate storyboard scenes for the following script:
+GENERATE_SCENES_USER = """Please generate scenes for the following script:
 
-**TITLE:** {title}
+TITLE: {title}
 
-**LINES:**
+LINES:
 {formatted_lines}
 """
 
-GENERATE_IMAGE_PROMPT_SYSTEM = """You are a creative AI image prompt engineer. Your task is to write highly descriptive, visually rich text-to-image prompts based on a story scene lines. 
+GENERATE_IMAGE_PROMPT_SYSTEM = """You are a creative AI image prompt engineer. A story title, some lines from a scene, details of previous scenes, instructions and a list of characters are provided to you. Your task is to generate a descriptive image-generation prompt that represents the scene meaningfully following the provided instructions. This prompt will later be used to generate an image using a text-to-image AI model.
 
 INPUTS:
-- TITLE: The story's title.
-- SCENE LINES: The script lines occurring in this specific scene.
-- PREVIOUS SCENES: Context to maintain visual continuity.
-- CHARACTERS: List of available characters.
-- INSTRUCTIONS: User specified instructions to follow when writing the prompt.
+- **TITLE** (REQUIRED): The title of the story.
+- **SCENE LINES** (REQUIRED): A few lines from the script that describe the current scene.
+- **PREVIOUS SCENES** (OPTIONAL): Details of up to the last 10 scenes, including their lines and generated prompts.
+- **CHARACTERS** (OPTIONAL): A list of characters present in the story with their name and descriptions.
+- **INSTRUCTIONS** (OPTIONAL): Some guidelines for style, character details, atmosphere, or any other constraints.
 
 RULES:
-1. VISUALS ONLY: Describe *only* what can be seen (characters, actions, setting, lighting, camera angle, atmosphere). Omit dialogue, abstract concepts, names, or plot summaries. The image model cannot understand the story. It only generates an image based on the provided visual prompt.
-2. CONTINUITY: If current scene is in continuity with previous scene, maintain consistent visual elements (e.g., same character appearances, same location details etc).
-3. INDEPENDENCE: Every scene's image prompt is independent from each other, you should not refer to anything from previous scene directly. (e.g. "same room as before", "same dog as previous scene" etc are not allowed). Instead describe it in words taking from previous scene's prompt.
-3. CHARACTER TAGGING: Use the strict notation [CHX] to represent a character from the provided list (where X is the index, e.g., [CH1]). Do not include any descriptive information (e.g. age, gender, profession, backstory etc) about the character in the prompt, as their visual appearance will be automatically derived from the tagged ID.
-   - CORRECT: "[CH1] sitting on a wooden bench."
-   - INCORRECT: "The main character [CH1] sitting on a wooden bench.", "A 12 year old boy [CH1] sitting on a wooden bench."
-   - If there is no character in the current scene, just ignore the character list.
-   - If a required character isn't in the provided list, describe them visually in words.
-4. TAGGED CHARACTER REPRESENTATION: DO not describe much about tagged character's apperance, the apperance will be taken from tagged ID ([CHX]) automatically.
-5. AI SAFETY FILTERS: Avoid violence, gore, or sexually explicit terms. Use clever, neutral, and highly descriptive language to depict dramatic moments without triggering AI safety blocks.
-6. STYLE: Follow the user INSTRUCTIONS strictly.
-
-FOLLOW THIS STRUCTURE:
-[IMAGE STYLE] [CHARACTER & EXPRESSION SETTINGS] [SCENE SETTINGS] [OTHERS]
+- If the previous scenes and the current one seem to be a continuation, ensure visual continuity of the generated image prompt with the previous scenes' prompts.
+- To include a character in the prompt from given list, you use a special notation **[CHX]** where X is the index of the character in the provided character list (starting from 1). - Generate current scene's image prompt in continuity with the previous scenes.
+- All the characters present in the whole story is provided to you, but you include only the characters that are required in current scene.
+- If there is no characters in the scene, you just ignore the provided character list.
+- If there is a character required in the scene which is not provided in the character list, you MUST NOT write a character notation for it. Instead you should describe the character in the prompt with words.
+- Follow the instructions provided to you strictly.
 """
 
-GENERATE_IMAGE_PROMPT_USER = """Generate a standalone image prompt using the following inputs:
-
+GENERATE_IMAGE_PROMPT_USER = """Generate an image prompt using the following inputs:
 **TITLE:** {title}
 
 **SCENE LINES:**
@@ -124,61 +173,52 @@ GENERATE_IMAGE_PROMPT_USER = """Generate a standalone image prompt using the fol
 {instructions}
 """
 
-DETECT_CHARACTERS_SYSTEM = """You are a Lead Character Designer for an animated production. Your task is to extract only the main, recurring characters from the provided script lines.
+
+DETECT_CHARACTERS_SYSTEM = """You are a professional animation artist working on a story. Lines from a script are provided to you. Your task is to find out only the consistent characters from the story and return a list.
 
 RULES:
-1. FILTERING: Identify ONLY core characters who appear consistently or play a significant role. Strictly ignore background characters, generic crowds (e.g., "PEOPLE", "POLICE", "ONLOOKERS"), and one-off speaking roles.
-2. DESCRIPTIONS: Provide a concise, 1 sentence description which can be used to identify the character in the story. (e.g. "The main character")
-3. VISUAL FOCUS: Exclude narrators unless the script implies they are physically present on screen.
+- **DO NOT** include characters that are not present consistently throughout the story. For example, if a character appears only in a couple of lines, you ignore it.
+- You detect only the main characters that are present consistently throughout the story.
+- Mass characters like "CROWD", "PEOPLE", "ONLOOKERS" should be ignored.
+- The description of character should be a simple one line identification. For example, "The main character", "Father of the main character" etc.
 """
 
-DETECT_CHARACTERS_USER = """Extract the main characters for the following script:
+DETECT_CHARACTERS_USER = """Please find the main characters for the following script:
+TITLE: {title}
 
-**TITLE:** {title}
-
-**LINES:**
+LINES:
 {formatted_lines}
 """
 
-SMART_TRANSCRIPT_SYSTEM = """You are an expert Audio Transcriptionist. You will receive an SRT transcript (either word-level or sentence-level). Your goal is to output cleanly formatted, sentence-level timestamps.
+SMART_TRANSCRIPT_SYSTEM = """You are a professional transcriptionist. A sentence-level or word-level transcript SRT file is given to you. Your task is to process the data in the following way:
+- **SENTENCE-LEVEL**: You return the same sentence-level transcript without changing anything as you can not guess the timestamps of the words.
+- **WORD-LEVEL**: You convert the word-level transcript into a sentence-level transcript. Each sentence should have its text, start timestamp and end timestamp.
 
 RULES:
-1. PRESERVATION: DO NOT alter, add, or remove any spoken words from the text.
-2. CHUNKING: If the input is word-level, combine the words into natural, grammatically sound sentences.
-3. SIZE: If a line is very long, try to break it into two parts at a natural pause (e.g., conjunctions, punctuation etc).
-4. TIMESTAMPS: For merged sentences, use the start time of the first word and the end time of the last word. If the input is already sentence-level, return it exactly as-is.
+- MUST NOT change any text of input words.
+- Make small meaningful sentences.
+- Remove the ending exclamation mark from every sentence if there is any.
 """
 
-SMART_TRANSCRIPT_USER = """Process the following transcript into sentence-level chunks:
+SMART_TRANSCRIPT_USER = """Please process the following transcript:
 
-**TRANSCRIPT SRT:**
+TRANSCRIPT SRT:
 {transcript}
 """
 
-# --- Functions ---
-def format_duration(d):
-    return f"{d:.2f}".rstrip("0").rstrip(".")
-
 def generate_scenes(title: str, lines: list[dict]) -> list[list[int]]:
-    structured_model = model_base.with_structured_output(ScenesWithIndexGroups)
+    formatted_lines = "\n".join([f"{i}: \"{line['text']}\"" for i, line in enumerate(lines)])
 
-    formatted_lines = "\n".join(
-        [f'{i}: {line["text"]} ({format_duration(line["duration"])}s)'
-         for i, line in enumerate(lines)]
-    )
-
-    response = structured_model.invoke([
+    response = groq_key_pool.invoke_structured(ScenesWithIndexGroups, [
         {"role": "system", "content": GENERATE_SCENES_SYSTEM},
         {"role": "user", "content": GENERATE_SCENES_USER.format(title=title, formatted_lines=formatted_lines)}
     ])
-
     return response.scenes
 
 def detect_characters(title: str, lines: list[dict]) -> list[Character]:
-    structured_model = model_base.with_structured_output(DetectedCharacters)
     formatted_lines = "\n".join([f"{line['text']}" for line in lines])
 
-    response = structured_model.invoke([
+    response = groq_key_pool.invoke_structured(DetectedCharacters, [
         {"role": "system", "content": DETECT_CHARACTERS_SYSTEM},
         {"role": "user", "content": DETECT_CHARACTERS_USER.format(title=title, formatted_lines=formatted_lines)}
     ])
@@ -191,9 +231,8 @@ def generate_image_prompt(
         characters: list | None = None,
         instructions: str | None = None,
 ):
-    instructions = instructions or "No instructions provided."
-    formatted_previous_scenes = "No previous scenes provided."
-    formatted_characters = "No characters provided."
+    instructions = instructions or "No instructions."
+    formatted_previous_scenes = "No previous scenes available."
     
     if previous_scenes and len(previous_scenes) > 0:
         formatted_scenes = []
@@ -206,11 +245,11 @@ def generate_image_prompt(
             )
         formatted_previous_scenes = "\n\n".join(formatted_scenes)
 
+    formatted_characters = "No characters."
     if characters and len(characters) > 0:
         formatted_characters = "\n".join([f"[CH{i+1}]\n- Name: {c.name}\n- Description: {c.description}" for i, c in enumerate(characters)])
 
-    structured_model = model_pro.with_structured_output(SceneImagePrompt)
-    response = structured_model.invoke([
+    response = groq_key_pool.invoke_structured(SceneImagePrompt, [
         {"role": "system", "content": GENERATE_IMAGE_PROMPT_SYSTEM},
         {"role": "user", "content": GENERATE_IMAGE_PROMPT_USER.format(
             title=title,
@@ -223,7 +262,7 @@ def generate_image_prompt(
     return {"prompt": response.prompt}
 
 def smart_transcript(transcript: str) -> list[TranscriptSentence]:
-    structured_model = model_mass.with_structured_output(SentenceTranscript)
+    structured_model = model_dumbass.with_structured_output(SentenceTranscript)
     response = structured_model.invoke([
         {"role": "system", "content": SMART_TRANSCRIPT_SYSTEM},
         {"role": "user", "content": SMART_TRANSCRIPT_USER.format(transcript=transcript)}

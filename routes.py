@@ -4,7 +4,7 @@ from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from utils.llm import generate_scenes, generate_image_prompt, detect_characters, smart_transcript
-from utils.whisk import generate_image, generate_image_with_chars, upload_image, WhiskError
+from utils.google_flow import generate_image, upload_image, GoogleFlowError
 from utils.video import export_video_generator
 from typing import Literal, Optional, List
 from enum import Enum
@@ -48,6 +48,7 @@ class CharacterMediaInput(BaseModel):
     name: str = Field(..., min_length=1, strip_whitespace=True)
     description: str = Field(..., min_length=1, strip_whitespace=True)
     mediaId: str = Field(..., min_length=1, strip_whitespace=True)
+    image: Optional[str] = None
 
 class GenerateImageCharsRequest(BaseModel):
     prompt: str = Field(..., min_length=1, strip_whitespace=True)
@@ -90,14 +91,9 @@ async def _generate_scenes(request: GenerateScenesRequest):
 @router.post("/generate-image")
 async def _generate_image(request: GenerateImageRequest):
     try:
-        data = generate_image(
-            prompt=request.prompt,
-            aspect_ratio=request.aspect_ratio.value,
-            model=request.model,
-            session_token=request.session_token
-        )
+        data = generate_image(prompt=request.prompt, aspect_ratio=request.aspect_ratio.value, session_token=request.session_token)
         return JSONResponse(data)
-    except WhiskError as e:
+    except GoogleFlowError as e:
         return JSONResponse({"error": e.message, "refresh": e.refresh}, status_code=e.status_code)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -106,24 +102,14 @@ async def _generate_image(request: GenerateImageRequest):
 @router.post("/generate-image-chars")
 async def _generate_image_chars(request: GenerateImageCharsRequest):
     try:
-        formatted_characters = []
-        for chr in request.characters:
-            formatted_characters.append({
-                "caption": f"{chr.name}: {chr.description}",
-                "mediaInput": {
-                    "mediaCategory": "MEDIA_CATEGORY_SUBJECT",
-                    "mediaGenerationId": chr.mediaId
-                }
-            })
-
-        data = generate_image_with_chars(
+        data = generate_image(
             prompt=request.prompt,
-            recipe_media_inputs=formatted_characters,
             aspect_ratio=request.aspect_ratio.value,
-            session_token=request.session_token
+            session_token=request.session_token,
+            references=[character.model_dump() for character in request.characters],
         )
         return JSONResponse(data)
-    except WhiskError as e:
+    except GoogleFlowError as e:
         return JSONResponse({"error": e.message, "refresh": e.refresh}, status_code=e.status_code)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -137,7 +123,7 @@ async def _upload_character_image(request: UploadImageRequest):
             session_token=request.session_token
         )
         return JSONResponse(data)
-    except WhiskError as e:
+    except GoogleFlowError as e:
         return JSONResponse({"error": e.message, "refresh": e.refresh}, status_code=e.status_code)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

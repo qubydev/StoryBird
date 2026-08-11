@@ -5,15 +5,13 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from '@/components/ui/dialog';
 import { FaUserPlus, FaTrash, FaUpload, FaUserCircle, FaEdit, FaSpinner } from 'react-icons/fa';
-import { fileToBase64 } from '../../lib/storyboard-utils';
+import { fileToBase64, getStorageItem } from '../../lib/storyboard-utils';
 import toast from 'react-hot-toast';
-import { useSettings } from '@/context/SettingsContext';
 
 const CharacterCard = ({ character, index, dispatch }) => {
     const [isEditOpen, setIsEditOpen] = useState(false);
     const [isUploadingEdit, setIsUploadingEdit] = useState(false);
     const [isUploadingDirect, setIsUploadingDirect] = useState(false);
-    const { sessionKey, setSessionKey } = useSettings();
 
     const [editState, setEditState] = useState({
         name: '',
@@ -46,8 +44,9 @@ const CharacterCard = ({ character, index, dispatch }) => {
     };
 
     const performUpload = async (file) => {
-        if (!sessionKey) {
-            throw new Error("Session Key is missing. Please add it in Global Settings.");
+        const sessionData = getStorageItem('sb_global_session_key');
+        if (!sessionData || !sessionData.text) {
+            throw new Error("Google Flow cookies are missing. Please add them in Global Settings.");
         }
 
         const base64 = await fileToBase64(file);
@@ -58,15 +57,12 @@ const CharacterCard = ({ character, index, dispatch }) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 rawBytes: base64,
-                session_token: sessionKey
+                session_token: sessionData.text
             })
         });
 
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            if (err.refresh) {
-                setSessionKey('');
-            }
             throw new Error(err.error || err.message || "Upload failed");
         }
 
@@ -276,11 +272,14 @@ const CharactersSection = () => {
 
     const handleAdd = () => dispatch({ type: 'ADD_CHARACTER' });
 
+    if (characters.length === 0 && state.items.length === 0) return null;
+
     return (
         <div className="mb-6 space-y-4 animate-in slide-in-from-top-4 fade-in duration-300">
             <div className="flex items-center justify-between px-1 border-b border-slate-200 pb-2">
                 <h3 className="text-sm font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
                     Characters
+                    <span className="bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm">{characters.length}</span>
                 </h3>
                 <Button variant="ghost" size="sm" onClick={handleAdd} className="h-7 text-xs text-primary hover:bg-primary/10 border border-primary/20">
                     <FaUserPlus className="mr-2" /> Add Character
@@ -288,8 +287,8 @@ const CharactersSection = () => {
             </div>
 
             {characters.length === 0 ? (
-                <div className="text-center py-8 rounded-xl text-muted-foreground text-sm">
-                    Use "Detect Characters" or add them manually.
+                <div className="text-center py-8 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400 text-sm">
+                    No characters added yet. Use "Detect Characters" or add them manually.
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

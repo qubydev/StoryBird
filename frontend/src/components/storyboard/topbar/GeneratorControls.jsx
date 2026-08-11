@@ -3,12 +3,10 @@ import { useStoryBoard } from '../../../context/StoryBoardContext';
 import { Button } from '@/components/ui/button';
 import { FaMagic, FaSpinner, FaPenFancy, FaImages, FaStop, FaUsers } from 'react-icons/fa';
 import toast from 'react-hot-toast';
-import { useSettings } from '@/context/SettingsContext';
+import { getStorageItem, refreshSessionKey } from '../../../lib/storyboard-utils';
 
 const GeneratorControls = () => {
     const { state, dispatch } = useStoryBoard();
-    const { sessionKey, setSessionKey, instructions } = useSettings();
-
     const [isGeneratingScenes, setIsGeneratingScenes] = useState(false);
     const [isGeneratingPrompts, setIsGeneratingPrompts] = useState(false);
     const [isGeneratingAllImages, setIsGeneratingAllImages] = useState(false);
@@ -20,11 +18,6 @@ const GeneratorControls = () => {
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
 
     const handleDetectCharacters = async () => {
-        if (!state.title?.trim() || state.title.trim() === 'Untitled') {
-            toast.error("Please enter a title to get the best results.");
-            return;
-        }
-
         setIsDetectingChars(true);
         const toastId = toast.loading("Detecting characters from script...");
 
@@ -43,7 +36,7 @@ const GeneratorControls = () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    title: state.title,
+                    title: state.title || 'Untitled',
                     lines: payload
                 })
             });
@@ -96,8 +89,7 @@ const GeneratorControls = () => {
 
             const payload = allSentences.map(s => {
                 return {
-                    text: s.text || '',
-                    duration: (s.end - s.start)
+                    text: s.text || ''
                 };
             });
 
@@ -139,6 +131,8 @@ const GeneratorControls = () => {
             return;
         }
 
+        const instData = getStorageItem('sb_global_instructions');
+
         const activeCharacters = (state.characters || []).filter(c => c.mediaId);
         // Prompt generation only needs name and description
         const charactersPayload = activeCharacters.length > 0 ? activeCharacters.map(c => ({
@@ -153,12 +147,9 @@ const GeneratorControls = () => {
         const signal = promptAbortControllerRef.current.signal;
 
         const scenesToProcess = state.items.filter(item => item.type === 'scene');
-        const totalScenes = scenesToProcess.length;
-
         try {
             let scenesProcessed = 0;
             let scenesSkipped = 0;
-            let currentIndex = 0;
             let previousScenesList = [];
 
             for (let i = 0; i < scenesToProcess.length; i++) {
@@ -168,7 +159,6 @@ const GeneratorControls = () => {
 
                 if (item.prompt && item.prompt.trim().length > 0) {
                     scenesSkipped++;
-                    currentIndex++;
                     if (sceneText) {
                         previousScenesList.push({ scene_lines: sceneText, prompt: item.prompt });
                         if (previousScenesList.length > 10) previousScenesList.shift();
@@ -178,19 +168,11 @@ const GeneratorControls = () => {
 
                 if (!sceneText) {
                     scenesSkipped++;
-                    currentIndex++;
                     continue;
                 }
 
                 try {
                     dispatch({ type: 'UPDATE_SCENE_META', payload: { id: item.id, field: 'promptGenStatus', value: 'generating' } });
-
-                    if (!state.title.trim() || state.title.trim() === 'Untitled') {
-                        return toast.error("Please provide a title for your storyboard to get the best results.", { id: toastId });
-                    }
-
-                    currentIndex++;
-                    toast.loading(`Generating prompts... (${currentIndex}/${totalScenes})`, { id: toastId });
 
                     const res = await fetch(`${backendUrl}/api/generate-image-prompt`, {
                         method: 'POST',
@@ -198,7 +180,7 @@ const GeneratorControls = () => {
                         body: JSON.stringify({
                             title: state.title || 'Untitled',
                             scene_lines: sceneText,
-                            instructions: instructions || '',
+                            instructions: instData.text ? instData.text : null,
                             previous_scenes: previousScenesList.length > 0 ? previousScenesList : null,
                             characters: charactersPayload
                         }),
@@ -278,8 +260,9 @@ const GeneratorControls = () => {
             return;
         }
 
-        if (!sessionKey) {
-            return toast.error("Session Key is missing. Please add it in Global Settings.");
+        const sessionData = getStorageItem('sb_global_session_key');
+        if (!sessionData.text) {
+            return toast.error("Google Flow cookies are missing. Please add them in Global Settings.");
         }
 
         setIsGeneratingAllImages(true);
@@ -365,7 +348,7 @@ const GeneratorControls = () => {
                         let endpoint = `${backendUrl}/api/generate-image`;
                         let reqBody = {
                             prompt: scene.prompt,
-                            session_token: sessionKey
+                            session_token: sessionData.text,
                         };
 
                         if (subjectIds.length > 0) {
@@ -376,7 +359,8 @@ const GeneratorControls = () => {
                                 return {
                                     name: c ? (c.name || 'Unknown Character') : 'Unknown Character',
                                     description: c ? (c.description || 'Character') : 'Character',
-                                    mediaId: id
+                                    mediaId: id,
+                                    image: c ? c.image : null
                                 };
                             });
                         }
@@ -390,10 +374,8 @@ const GeneratorControls = () => {
 
                         if (!res.ok) {
                             const err = await res.json().catch(() => ({}));
-                            if (err.refresh) {
-                                setSessionKey('');
-                            }
-                            throw new Error(err.error || "Failed to generate image");
+                            if (err.refresh) refreshSessionKey();
+                            throw new Error(err.message || "Failed to generate image");
                         }
 
                         const data = await res.json();

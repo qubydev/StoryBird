@@ -12,20 +12,23 @@ if sys.platform == "win32":
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from routes import router
 from utils.helpers import error_response
-from utils.whisk import WhiskError
+from utils.google_flow import GoogleFlowError
 
-app = FastAPI(title="StoryBird API")
+
+app = FastAPI(title="Anim-Board API")
+
 
 # --------------------------------------------------
 # CORS
 # --------------------------------------------------
-frontend_ports = [4173, 5173, 3000, 8000]
+frontend_ports = [4173, 5173, 3000]
+
 origins = [f"http://localhost:{port}" for port in frontend_ports] + [
     f"http://127.0.0.1:{port}" for port in frontend_ports
 ]
@@ -38,54 +41,110 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # --------------------------------------------------
-# Validation Errors & HTTP Exceptions
+# Validation Errors (422)
 # --------------------------------------------------
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    return error_response(status.HTTP_422_UNPROCESSABLE_ENTITY, "Validation failed", errors=exc.errors())
+async def validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError,
+):
+    return error_response(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "Validation failed",
+        errors=exc.errors(),
+    )
 
+
+# --------------------------------------------------
+# HTTP Errors (404, 405, etc.)
+# --------------------------------------------------
 @app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-    return error_response(exc.status_code, str(exc.detail))
+async def http_exception_handler(
+    request: Request,
+    exc: StarletteHTTPException,
+):
+    return error_response(
+        exc.status_code,
+        str(exc.detail),
+    )
 
-@app.exception_handler(WhiskError)
-async def whisk_exception_handler(request: Request, exc: WhiskError):
-    return error_response(exc.status_code, exc.message, errors=exc.errors, refresh=exc.refresh)
 
+# --------------------------------------------------
+# Google Flow Service Errors
+# --------------------------------------------------
+@app.exception_handler(GoogleFlowError)
+async def google_flow_exception_handler(
+    request: Request,
+    exc: GoogleFlowError,
+):
+    return error_response(
+        exc.status_code,
+        exc.message,
+        errors=exc.errors,
+        refresh=exc.refresh,
+    )
+
+
+# --------------------------------------------------
+# Unexpected Server Errors (500)
+# --------------------------------------------------
 @app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    return error_response(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
+async def global_exception_handler(
+    request: Request,
+    exc: Exception,
+):
+    # Optional: add logging here later
+    return error_response(
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        "Internal server error",
+    )
+
 
 # --------------------------------------------------
 # API Routes
 # --------------------------------------------------
 app.include_router(router, prefix="/api")
 
+
 # --------------------------------------------------
-# Static Mounts (Order Matters!)
+# Static Files + SPA
 # --------------------------------------------------
 dist_path = Path(__file__).parent / "frontend" / "dist"
 
-# Mount the exports directory directly
-app.mount("/exports", StaticFiles(directory="exports"), name="exports")
-app.mount("/assets", StaticFiles(directory=dist_path / "assets"), name="assets")
+app.mount(
+    "/static",
+    StaticFiles(directory=dist_path / "assets"),
+    name="static",
+)
+
 
 @app.get("/{full_path:path}")
 async def spa_fallback(full_path: str):
-    if full_path.startswith("api/"):
-        return error_response(status.HTTP_404_NOT_FOUND, "API route not found")
 
-    static_file = dist_path / full_path
-    if static_file.is_file():
-        return FileResponse(static_file)
+    # Prevent SPA from swallowing API mistakes
+    if full_path.startswith("api/"):
+        return error_response(
+            status.HTTP_404_NOT_FOUND,
+            "API route not found",
+        )
 
     index_file = dist_path / "index.html"
+
     if index_file.exists():
         return FileResponse(index_file)
 
-    return error_response(status.HTTP_404_NOT_FOUND, "Frontend build not found")
+    return error_response(
+        status.HTTP_404_NOT_FOUND,
+        "Frontend build not found",
+    )
 
+
+# --------------------------------------------------
+# Local Dev Entry
+# --------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="localhost", port=8000)
