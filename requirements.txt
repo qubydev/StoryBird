@@ -5,3 +5,13 @@ langchain-groq
 langchain-openai
 pillow
 patchright
+python-dotenv
+
+# Local forced alignment (utils/align.py). Install the CPU builds explicitly,
+# otherwise pip pulls multi-GB CUDA wheels that this feature does not use:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+# Voiceover generation still works without these; timings fall back to an
+# estimate. The MMS_FA checkpoint (~1.2 GB) downloads on first alignment.
+torch
+torchaudio
+numpy

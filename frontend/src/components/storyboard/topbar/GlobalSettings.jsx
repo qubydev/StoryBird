@@ -1,113 +1,95 @@
-import React, { useState, useEffect } from 'react';
+// Storyboard-scoped settings. Every value starts as the dashboard default;
+// editing one here overrides it for this storyboard only and leaves the
+// defaults, and every other storyboard, untouched.
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
-import { FaKey, FaInfoCircle } from 'react-icons/fa';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { FaSlidersH, FaExternalLinkAlt, FaUndo } from 'react-icons/fa';
 import toast from 'react-hot-toast';
-import { getStorageItem } from '../../../lib/storyboard-utils';
+import SettingsPanel from '../../settings/SettingsPanel';
+import { useProjectSettings } from '../../../hooks/useProjectSettings';
+import { validateFlowCookies } from '../../../lib/settings';
 
-const setStorageItem = (key, text) => {
-    localStorage.setItem(key, JSON.stringify({ text }));
-};
-
-const parseSessionCookies = (input) => {
-    try {
-        const cookies = JSON.parse(input);
-        if (!Array.isArray(cookies)) throw new Error("Input is not a JSON array");
-        if (!cookies.some(c => c && c.name && Object.prototype.hasOwnProperty.call(c, 'value'))) {
-            throw new Error("No usable cookies found");
-        }
-        return JSON.stringify(cookies);
-    } catch (e) {
-        throw new Error("Paste a JSON cookie array exported from a browser signed in to Google Flow");
-    }
-};
-
-const GlobalInputButton = ({ title, storageKey, icon: Icon, processInput, onUpdate }) => {
+export const GlobalSettings = () => {
     const [open, setOpen] = useState(false);
-    const [text, setText] = useState("");
-    const [isSaved, setIsSaved] = useState(false);
+    const { settings, isOverridden, overrideCount, setOverride, clearOverride, clearAllOverrides } = useProjectSettings();
 
-    useEffect(() => {
-        const data = getStorageItem(storageKey);
-        setText(data.text || "");
-        setIsSaved(!!data.text);
-    }, [open, storageKey]);
-
-    const handleSave = () => {
-        let finalValue = text.trim();
-
-        if (processInput && finalValue) {
+    const change = (key, value) => {
+        if (key === 'flowCookies' && value.trim()) {
             try {
-                finalValue = processInput(finalValue);
-            } catch (e) {
-                toast.error(e.message || "Invalid input");
-                return;
+                validateFlowCookies(value);
+            } catch {
+                // Let the user keep typing; the value is validated on save.
             }
         }
-
-        if (finalValue) {
-            setStorageItem(storageKey, finalValue);
-            setIsSaved(true);
-            setText(finalValue);
-            toast.success(`${title} saved`);
-            setOpen(false);
-        } else {
-            localStorage.removeItem(storageKey);
-            setIsSaved(false);
-            setText("");
-            toast.success(`${title} cleared`);
-            setOpen(false);
-        }
-
-        onUpdate();
+        setOverride(key, value);
     };
 
-    let btnClass = "h-9 text-sm px-3 border transition-colors ";
-    btnClass += isSaved ? "text-green-600 hover:text-green-700 hover:bg-green-50 border-green-200" : "text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200";
+    const openFlowProfile = async () => {
+        try {
+            const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+            const response = await fetch(`${backendUrl}/api/open-flow-profile`, { method: 'POST' });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.message || 'Could not open the Google Flow sign-in window');
+            toast.success(data.message || 'Google Flow sign-in window opened');
+        } catch (error) {
+            toast.error(error.message || 'Could not open the Google Flow sign-in window');
+        }
+    };
+
+    const resetAll = () => {
+        clearAllOverrides();
+        toast.success('This storyboard follows the default settings again');
+    };
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-                <Button variant="outline" size="sm" className={btnClass}><Icon className="mr-2" /> {title}</Button>
+                <Button variant="outline" size="sm" className="h-9 px-3 text-sm">
+                    <FaSlidersH className="mr-2" /> Settings
+                    {overrideCount > 0 && (
+                        <span className="ml-2 rounded-full bg-violet-100 px-1.5 text-[11px] font-medium text-violet-700">{overrideCount}</span>
+                    )}
+                </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[500px]">
-                <DialogHeader><DialogTitle className="flex items-center gap-2"><Icon /> {title}</DialogTitle></DialogHeader>
-                <div className="py-4">
-                    <Textarea value={text} onChange={(e) => setText(e.target.value)} className="h-[300px] break-all font-mono text-xs" placeholder={`Enter ${title}...`} />
+
+            <DialogContent className="flex max-h-[88vh] w-[calc(100vw-2rem)] flex-col gap-4 overflow-hidden sm:max-w-2xl">
+                <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2"><FaSlidersH /> Storyboard settings</DialogTitle>
+                </DialogHeader>
+
+                <p className="shrink-0 text-sm text-muted-foreground">
+                    {overrideCount === 0
+                        ? 'This storyboard uses the default settings from the dashboard. Change anything below to override it here only.'
+                        : `${overrideCount} setting${overrideCount === 1 ? '' : 's'} overridden for this storyboard. The dashboard defaults are unchanged.`}
+                </p>
+
+                <div className="min-h-0 overflow-y-auto pr-1">
+                    <SettingsPanel
+                        scope="project"
+                        values={settings}
+                        onChange={change}
+                        isOverridden={isOverridden}
+                        onReset={clearOverride}
+                    />
                 </div>
-                <DialogFooter><Button onClick={handleSave}>{text ? "Save Changes" : "Save"}</Button></DialogFooter>
+
+                <DialogFooter className="shrink-0 sm:justify-between">
+                    <div className="flex gap-2">
+                        <Button variant="outline" onClick={openFlowProfile} className="text-blue-600 hover:bg-blue-50">
+                            <FaExternalLinkAlt className="mr-2" /> Open Flow sign-in
+                        </Button>
+                        {overrideCount > 0 && (
+                            <Button variant="outline" onClick={resetAll} className="text-slate-600">
+                                <FaUndo className="mr-2" /> Reset all to global
+                            </Button>
+                        )}
+                    </div>
+                    <Button onClick={() => setOpen(false)}>Done</Button>
+                </DialogFooter>
             </DialogContent>
         </Dialog>
     );
 };
 
-export const GlobalSettings = () => {
-    const [config, setConfig] = useState({
-        instructions: { hasText: false },
-        session: { hasText: false }
-    });
-
-    const refreshConfig = () => {
-        const instData = getStorageItem('sb_global_instructions');
-        const sessionData = getStorageItem('sb_global_session_key');
-
-        setConfig({
-            instructions: { hasText: !!instData.text },
-            session: { hasText: !!sessionData.text }
-        });
-    };
-
-    useEffect(() => {
-        refreshConfig();
-        window.addEventListener('session_key_changed', refreshConfig);
-        return () => window.removeEventListener('session_key_changed', refreshConfig);
-    }, []);
-
-    return (
-        <div className="flex items-center gap-2">
-            <GlobalInputButton title="Instructions" storageKey="sb_global_instructions" icon={FaInfoCircle} onUpdate={refreshConfig} />
-            <GlobalInputButton key={`session-${config.session.hasText}`} title="Flow Cookies" storageKey="sb_global_session_key" icon={FaKey} processInput={parseSessionCookies} onUpdate={refreshConfig} />
-        </div>
-    );
-};
+export default GlobalSettings;

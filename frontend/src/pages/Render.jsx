@@ -21,6 +21,24 @@ export default function Render() {
         if (file && file.type === 'application/json') {
             setJsonFile(file)
             setVideoUrl(null)
+            const reader = new FileReader()
+            reader.onload = (event) => {
+                try {
+                    const project = JSON.parse(event.target.result)
+                    const voiceover = project.voiceover
+                    if (!voiceover?.dataUrl) return
+                    const [header, encoded] = voiceover.dataUrl.split(',')
+                    const mimeType = voiceover.mimeType || header.match(/data:(.*?);/)?.[1] || 'audio/mpeg'
+                    const bytes = atob(encoded)
+                    const data = new Uint8Array(bytes.length)
+                    for (let index = 0; index < bytes.length; index++) data[index] = bytes.charCodeAt(index)
+                    setAudioFile(new File([data], voiceover.filename || 'storyboard-voiceover.mp3', { type: mimeType }))
+                    toast.success('Generated storyboard voiceover attached for export.')
+                } catch {
+                    // The uploaded JSON may be an older project without a voiceover.
+                }
+            }
+            reader.readAsText(file)
         } else {
             toast.error('Please upload a valid JSON file')
         }
@@ -180,7 +198,7 @@ export default function Render() {
                                 <FaMusic className={`h-5 w-5 transition-colors ${audioFile ? 'text-blue-600' : 'text-muted-foreground group-hover:text-primary'}`} />
                                 <div className="flex flex-col">
                                     <span className="text-sm font-medium">{audioFile ? audioFile.name : 'Upload Audio (Optional)'}</span>
-                                    <span className="text-xs text-muted-foreground tracking-tight">Voiceover or Background Music</span>
+                                    <span className="text-xs text-muted-foreground tracking-tight">Generated storyboard voiceover or an uploaded track</span>
                                 </div>
                             </div>
                             {audioFile && !isExporting && (

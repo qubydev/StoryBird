@@ -5,10 +5,12 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from '@/components/ui/dialog';
 import { FaUserPlus, FaTrash, FaUpload, FaUserCircle, FaEdit, FaSpinner } from 'react-icons/fa';
-import { fileToBase64, getStorageItem } from '../../lib/storyboard-utils';
+import { fileToBase64 } from '../../lib/storyboard-utils';
+import { useProjectSettings } from '../../hooks/useProjectSettings';
 import toast from 'react-hot-toast';
 
 const CharacterCard = ({ character, index, dispatch }) => {
+    const { settings, flowAccounts } = useProjectSettings();
     const [isEditOpen, setIsEditOpen] = useState(false);
     const [isUploadingEdit, setIsUploadingEdit] = useState(false);
     const [isUploadingDirect, setIsUploadingDirect] = useState(false);
@@ -44,11 +46,6 @@ const CharacterCard = ({ character, index, dispatch }) => {
     };
 
     const performUpload = async (file) => {
-        const sessionData = getStorageItem('sb_global_session_key');
-        if (!sessionData || !sessionData.text) {
-            throw new Error("Google Flow cookies are missing. Please add them in Global Settings.");
-        }
-
         const base64 = await fileToBase64(file);
         const backendUrl = import.meta.env.VITE_BACKEND_URL;
 
@@ -57,7 +54,7 @@ const CharacterCard = ({ character, index, dispatch }) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 rawBytes: base64,
-                session_token: sessionData.text
+                session_token: flowAccounts[0]?.cookies || settings.flowCookies
             })
         });
 

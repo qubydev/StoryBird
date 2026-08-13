@@ -1,49 +1,33 @@
 import React from 'react';
 import { useStoryBoard } from '../../context/StoryBoardContext';
 import { Input } from '@/components/ui/input';
-import FileMenu from './topbar/FileMenu';
-import StatsDisplay from './topbar/StatsDisplay';
-import GeneratorControls from './topbar/GeneratorControls';
-import { GlobalSettings } from './topbar/GlobalSettings';
+import TTSControls from './topbar/TTSControls';
+import AutoCreateControls from './topbar/AutoCreateControls';
 import SuperMenu from './topbar/SuperMenu';
-import { Link } from 'react-router-dom';
+import { FaCheckCircle } from 'react-icons/fa';
 
 const TopBar = () => {
     const { state, dispatch } = useStoryBoard();
 
     return (
-        <header className="sticky top-0 z-50 w-full bg-white border-b border-slate-200 shadow-sm">
-            <div className="flex flex-col gap-3 px-6 py-3">
-
-                {/* ROW 1: Title & File Menu + Settings + SuperMenu */}
-                <div className="flex flex-wrap items-center justify-between gap-y-3">
-                    <div className="flex items-center gap-4">
-                        <Link to="/">
-                            <img src="/logo.svg" alt="Logo" className="size-12" />
-                        </Link>
+        <header className="studio-header">
+            <div className="studio-header-main">
+                <div className="studio-brand-group">
+                    <div className="studio-project-name">
+                        <p>Storyboard project</p>
                         <Input
                             value={state.title}
                             onChange={(e) => dispatch({ type: 'UPDATE_TITLE', payload: e.target.value })}
-                            className="font-bold text-lg border-transparent focus:border-slate-300 hover:border-slate-200 w-full sm:w-80 px-2 h-10"
+                            className="w-full border-0 bg-transparent px-0 text-base font-semibold shadow-none focus-visible:ring-0"
                             placeholder="Untitled"
                         />
                     </div>
-
-                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                        <FileMenu />
-                        <div className="h-6 w-px bg-slate-200 mx-1 hidden sm:block"></div> {/* Subtle divider */}
-                        <GlobalSettings />
-                        <SuperMenu />
-                    </div>
                 </div>
-
-                {/* ROW 2: Stats/Selection & Generators */}
-                <div className="flex flex-wrap items-center justify-between gap-y-3 pt-1">
-                    <StatsDisplay />
-
-                    <div className="flex flex-wrap items-center gap-2">
-                        <GeneratorControls />
-                    </div>
+                <div className="studio-header-actions">
+                    <AutoCreateControls />
+                    <TTSControls />
+                    <span className="studio-saved-status"><FaCheckCircle /> {state.isDirty ? 'Saving changes' : 'All changes saved'}</span>
+                    <SuperMenu />
                 </div>
             </div>
         </header>

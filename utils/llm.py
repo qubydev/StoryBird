@@ -7,8 +7,14 @@ import os
 import re
 import threading
 from pydantic import BaseModel, Field
+from utils.chatgpt_wrapper import ChatGPTWrapperClient
 
-LONGCAT_API_KEY = os.getenv("LONGCAT_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API")
+OPENROUTER_MODEL = "deepseek/deepseek-v4-pro"
+OPENROUTER_TIMEOUT_SECONDS = float(os.getenv("OPENROUTER_TIMEOUT_SECONDS", "20"))
+PROMPT_PROVIDER = os.getenv("PROMPT_PROVIDER", "openrouter").strip().lower()
+CHATGPT_WRAPPER_URL = os.getenv("CHATGPT_WRAPPER_URL", "http://127.0.0.1:8001")
+CHATGPT_WRAPPER_TIMEOUT_SECONDS = int(os.getenv("CHATGPT_WRAPPER_TIMEOUT_SECONDS", "120"))
 
 
 def _load_groq_api_keys() -> list[str]:
@@ -80,13 +86,68 @@ class GroqKeyPool:
         raise last_rate_limit_error
 
 
-groq_key_pool = GroqKeyPool(_load_groq_api_keys())
+groq_key_pool: GroqKeyPool | None = None
 
-model_dumbass = ChatOpenAI(
-    base_url="https://api.longcat.chat/openai",
-    api_key=LONGCAT_API_KEY,
-    model="LongCat-Flash-Chat"
-)
+
+class OpenRouterClient:
+    """OpenRouter client for the app's schema-constrained prompt requests."""
+
+    def __init__(self, api_key: str):
+        if not api_key:
+            raise RuntimeError(
+                "No OpenRouter API key configured. Add OPENROUTER_API_KEY (or the "
+                "legacy OPENROUTER_API) to .env."
+            )
+
+        self._api_key = api_key
+        self._model = ChatOpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=self._api_key,
+            model=OPENROUTER_MODEL,
+            timeout=OPENROUTER_TIMEOUT_SECONDS,
+        )
+
+    def invoke_structured(self, schema: type[BaseModel], messages: list[dict]):
+        return self._model.with_structured_output(
+            schema,
+            method="function_calling",
+        ).invoke(messages)
+
+
+openrouter_client: OpenRouterClient | None = None
+
+
+def _invoke_structured(
+    schema: type[BaseModel],
+    messages: list[dict],
+    provider: str | None = None,
+):
+    """Use the configured prompt provider while keeping provider details server-side."""
+    selected_provider = (provider or PROMPT_PROVIDER).strip().lower()
+
+    if selected_provider == "chatgpt_wrapper":
+        if len(messages) != 2:
+            raise ValueError("The ChatGPT wrapper requires one system and one user message")
+        return ChatGPTWrapperClient(
+            CHATGPT_WRAPPER_URL,
+            CHATGPT_WRAPPER_TIMEOUT_SECONDS,
+        ).complete_structured(schema, messages[0]["content"], messages[1]["content"])
+
+    if selected_provider == "openrouter":
+        global openrouter_client
+        if openrouter_client is None:
+            openrouter_client = OpenRouterClient(OPENROUTER_API_KEY)
+        return openrouter_client.invoke_structured(schema, messages)
+
+    if selected_provider != "groq":
+        raise RuntimeError(
+            "Unsupported PROMPT_PROVIDER. Use 'openrouter', 'groq', or 'chatgpt_wrapper'."
+        )
+
+    global groq_key_pool
+    if groq_key_pool is None:
+        groq_key_pool = GroqKeyPool(_load_groq_api_keys())
+    return groq_key_pool.invoke_structured(schema, messages)
 
 class ScenesWithIndexGroups(BaseModel):
     scenes: list[list[int]] = Field(..., description="list of list of line indices, groupped into scenes.")
@@ -149,6 +210,8 @@ INPUTS:
 - **INSTRUCTIONS** (OPTIONAL): Some guidelines for style, character details, atmosphere, or any other constraints.
 
 RULES:
+- Base the prompt on the specific current scene lines, not merely the story's overall theme.
+- State concrete, scene-specific subjects, actions, setting, time, composition, and visual details whenever the lines provide them. Do not reuse a generic prompt from another scene.
 - If the previous scenes and the current one seem to be a continuation, ensure visual continuity of the generated image prompt with the previous scenes' prompts.
 - To include a character in the prompt from given list, you use a special notation **[CHX]** where X is the index of the character in the provided character list (starting from 1). - Generate current scene's image prompt in continuity with the previous scenes.
 - All the characters present in the whole story is provided to you, but you include only the characters that are required in current scene.
@@ -206,22 +269,22 @@ TRANSCRIPT SRT:
 {transcript}
 """
 
-def generate_scenes(title: str, lines: list[dict]) -> list[list[int]]:
+def generate_scenes(title: str, lines: list[dict], provider: str | None = None) -> list[list[int]]:
     formatted_lines = "\n".join([f"{i}: \"{line['text']}\"" for i, line in enumerate(lines)])
 
-    response = groq_key_pool.invoke_structured(ScenesWithIndexGroups, [
+    response = _invoke_structured(ScenesWithIndexGroups, [
         {"role": "system", "content": GENERATE_SCENES_SYSTEM},
         {"role": "user", "content": GENERATE_SCENES_USER.format(title=title, formatted_lines=formatted_lines)}
-    ])
+    ], provider=provider)
     return response.scenes
 
-def detect_characters(title: str, lines: list[dict]) -> list[Character]:
+def detect_characters(title: str, lines: list[dict], provider: str | None = None) -> list[Character]:
     formatted_lines = "\n".join([f"{line['text']}" for line in lines])
 
-    response = groq_key_pool.invoke_structured(DetectedCharacters, [
+    response = _invoke_structured(DetectedCharacters, [
         {"role": "system", "content": DETECT_CHARACTERS_SYSTEM},
         {"role": "user", "content": DETECT_CHARACTERS_USER.format(title=title, formatted_lines=formatted_lines)}
-    ])
+    ], provider=provider)
     return response.characters
 
 def generate_image_prompt(
@@ -230,6 +293,7 @@ def generate_image_prompt(
         previous_scenes: list | None = None,
         characters: list | None = None,
         instructions: str | None = None,
+        provider: str | None = None,
 ):
     instructions = instructions or "No instructions."
     formatted_previous_scenes = "No previous scenes available."
@@ -249,7 +313,7 @@ def generate_image_prompt(
     if characters and len(characters) > 0:
         formatted_characters = "\n".join([f"[CH{i+1}]\n- Name: {c.name}\n- Description: {c.description}" for i, c in enumerate(characters)])
 
-    response = groq_key_pool.invoke_structured(SceneImagePrompt, [
+    response = _invoke_structured(SceneImagePrompt, [
         {"role": "system", "content": GENERATE_IMAGE_PROMPT_SYSTEM},
         {"role": "user", "content": GENERATE_IMAGE_PROMPT_USER.format(
             title=title,
@@ -258,12 +322,11 @@ def generate_image_prompt(
             formatted_previous_scenes=formatted_previous_scenes,
             formatted_characters=formatted_characters
         )}
-    ])
+    ], provider=provider)
     return {"prompt": response.prompt}
 
 def smart_transcript(transcript: str) -> list[TranscriptSentence]:
-    structured_model = model_dumbass.with_structured_output(SentenceTranscript)
-    response = structured_model.invoke([
+    response = _invoke_structured(SentenceTranscript, [
         {"role": "system", "content": SMART_TRANSCRIPT_SYSTEM},
         {"role": "user", "content": SMART_TRANSCRIPT_USER.format(transcript=transcript)}
     ])

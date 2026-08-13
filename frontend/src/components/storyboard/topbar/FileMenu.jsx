@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription, DialogClose } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { FaDownload, FaUpload, FaEraser, FaSpinner, FaProjectDiagram, FaFileAlt, FaBrain } from 'react-icons/fa';
-import { parseTranscript, formatSRTTimestamp, parseSRTTimestamp } from '../../../lib/storyboard-utils';
+import { parseTranscript, parseSRTTimestamp, buildExportProject } from '../../../lib/storyboard-utils';
 import toast from 'react-hot-toast';
 
 const FileMenu = () => {
@@ -15,28 +15,7 @@ const FileMenu = () => {
     const smartTranscriptInputRef = React.useRef(null);
 
     const handleExport = () => {
-        const exportState = {
-            ...state,
-            items: state.items.map(item => {
-                if (item.type === 'scene') {
-                    return {
-                        ...item,
-                        sentences: item.sentences.map(s => ({
-                            ...s,
-                            start: formatSRTTimestamp(s.start),
-                            end: formatSRTTimestamp(s.end)
-                        }))
-                    };
-                } else if (item.type === 'sentence') {
-                    return {
-                        ...item,
-                        start: formatSRTTimestamp(item.start),
-                        end: formatSRTTimestamp(item.end)
-                    };
-                }
-                return item;
-            })
-        };
+        const exportState = buildExportProject(state);
 
         const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportState, null, 2));
         const node = document.createElement('a');

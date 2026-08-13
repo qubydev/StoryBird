@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect, useState } from 'react';
-import { getInitialData, generateId, loadFromStorage, saveToStorage, duplicateSceneData, getMaxEndTime } from '../lib/storyboard-utils';
+import { getInitialData, generateId, loadProject, saveProject, duplicateSceneData, getMaxEndTime } from '../lib/storyboard-utils';
 import toast from 'react-hot-toast';
 
 const StoryBoardContext = createContext();
@@ -25,6 +25,7 @@ const reducer = (state, action) => {
                 ...action.payload,
                 items: cleanPayloadItems(action.payload?.items),
                 characters: action.payload?.characters || [],
+                settings: action.payload?.settings || {},
                 isDirty: false,
                 selection: action.payload?.selection || []
             };
@@ -35,6 +36,7 @@ const reducer = (state, action) => {
                 ...action.payload,
                 items: cleanPayloadItems(action.payload?.items),
                 characters: action.payload?.characters || [],
+                settings: action.payload?.settings || {},
                 isDirty: true,
                 selection: []
             };
@@ -127,6 +129,9 @@ const reducer = (state, action) => {
 
         case 'UPDATE_TITLE':
             return { ...state, title: action.payload, isDirty: true };
+
+        case 'SET_FLOW_PROJECT':
+            return { ...state, flowProjectUrl: action.payload || null, isDirty: true };
 
         case 'TOGGLE_SELECTION': {
             const id = action.payload;
@@ -378,6 +383,44 @@ const reducer = (state, action) => {
             return { ...state, items: state.items.map(updateItem), isDirty: true };
         }
 
+        case 'IMPORT_SCRIPT': {
+            // A pasted script has no timings yet. Provisional one-second slots
+            // keep the board valid and ordered until the voiceover is aligned.
+            // Ids come from the caller so it can map alignment results back.
+            const newItems = action.payload.map((sentence, index) => ({
+                type: 'sentence',
+                id: sentence.id,
+                text: sentence.text,
+                start: index,
+                end: index + 1
+            }));
+
+            return { ...state, items: newItems, selection: [], isDirty: true };
+        }
+
+        // Overrides are stored per project. Writing one never touches the
+        // dashboard defaults; clearing one returns that setting to following
+        // the global value, including later changes to it.
+        case 'SET_SETTING_OVERRIDE':
+            return {
+                ...state,
+                settings: { ...(state.settings || {}), [action.payload.key]: action.payload.value },
+                isDirty: true
+            };
+
+        case 'CLEAR_SETTING_OVERRIDE': {
+            const { [action.payload]: removed, ...remaining } = state.settings || {};
+            return { ...state, settings: remaining, isDirty: true };
+        }
+
+        case 'CLEAR_ALL_SETTING_OVERRIDES':
+            return { ...state, settings: {}, isDirty: true };
+
+        // Only coarse step changes are stored, never per-scene progress: this
+        // state is persisted, and the autosave rewrites the whole project.
+        case 'SET_AUTOPILOT':
+            return { ...state, autoPilot: action.payload, isDirty: true };
+
         case 'IMPORT_TRANSCRIPT': {
             const newItems = action.payload.map(s => ({
                 type: 'sentence',
@@ -390,6 +433,23 @@ const reducer = (state, action) => {
             return { ...state, items: newItems, selection: [], isDirty: true };
         }
 
+        case 'APPLY_VOICEOVER': {
+            const timingById = new Map((action.payload.timings || []).map(timing => [timing.id, timing]));
+            const applyTiming = (sentence) => {
+                const timing = timingById.get(sentence.id);
+                return timing ? { ...sentence, start: timing.start, end: timing.end } : sentence;
+            };
+            return {
+                ...state,
+                items: state.items.map(item => item.type === 'scene'
+                    ? { ...item, sentences: item.sentences.map(applyTiming) }
+                    : applyTiming(item)),
+                voiceover: action.payload.voiceover,
+                voiceoverSrt: action.payload.srt,
+                isDirty: true,
+            };
+        }
+
         case 'MARK_SAVED':
             return { ...state, lastSaved: new Date().toISOString(), isDirty: false };
 
@@ -398,31 +458,31 @@ const reducer = (state, action) => {
     }
 };
 
-export const StoryBoardProvider = ({ children }) => {
+export const StoryBoardProvider = ({ children, projectId }) => {
     const [state, dispatch] = useReducer(reducer, getInitialData());
     const [isLoaded, setIsLoaded] = useState(false);
 
     useEffect(() => {
         const hydrate = async () => {
-            const savedData = await loadFromStorage();
+            const savedData = await loadProject(projectId);
             if (savedData) {
                 dispatch({ type: 'INIT_STATE', payload: savedData });
             }
             setIsLoaded(true);
         };
         hydrate();
-    }, []);
+    }, [projectId]);
 
     useEffect(() => {
         if (!state.isDirty) return;
 
         const handler = setTimeout(async () => {
-            await saveToStorage(state);
+            await saveProject(projectId, state);
             dispatch({ type: 'MARK_SAVED' });
         }, 500);
 
         return () => clearTimeout(handler);
-    }, [state]);
+    }, [state, projectId]);
 
     if (!isLoaded) {
         return <div className="min-h-screen flex items-center justify-center text-slate-400">Loading Storyboard...</div>;

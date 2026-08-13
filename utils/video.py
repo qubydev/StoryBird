@@ -5,7 +5,6 @@ import tempfile
 import logging
 import shutil
 import uuid
-import subprocess
 from pathlib import Path
 from typing import Optional, AsyncGenerator
 from PIL import Image
@@ -20,6 +19,11 @@ FPS           = 25
 VIDEO_CODEC   = "libx264"
 AUDIO_CODEC   = "aac"
 AUDIO_BITRATE = "128k"
+# Voiceovers arrive at whatever rate the TTS voice happens to use (16 or 24 kHz
+# mono). Players and editors expect standard delivery audio, and some render an
+# odd-rate mono track as silence, so always resample on the way out.
+AUDIO_RATE    = "48000"
+AUDIO_CHANNELS = "2"
 CRF           = 23
 PRESET        = "ultrafast"
 JPEG_QUALITY  = 95
@@ -89,14 +93,35 @@ def _make_kenburns_filter(duration: float, zoom_in: bool) -> str:
     )
 
 async def _run_ffmpeg_async(cmd: list, step_name: str) -> Optional[str]:
-    """Runs ffmpeg synchronously in a background thread to avoid blocking the async loop."""
-    def sync_run():
-        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    
-    process = await asyncio.to_thread(sync_run)
-    
+    """Run ffmpeg without blocking the event loop and clean it up on cancellation.
+
+    A ``subprocess.run`` inside ``asyncio.to_thread`` cannot be cancelled: the
+    awaiting task stops immediately, but ffmpeg keeps its output file open. On
+    Windows that makes ``TemporaryDirectory`` cleanup fail. Managing the child
+    process directly lets us wait until its handles have been released.
+    """
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    try:
+        _, stderr = await process.communicate()
+    except asyncio.CancelledError:
+        logger.info("[%s] cancelled; stopping ffmpeg", step_name)
+        if process.returncode is None:
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.communicate(), timeout=5)
+            except asyncio.TimeoutError:
+                logger.warning("[%s] did not stop gracefully; killing ffmpeg", step_name)
+                process.kill()
+                await process.communicate()
+        raise
+
     if process.returncode != 0:
-        err_msg = process.stderr.decode("utf-8", errors="replace")
+        err_msg = stderr.decode("utf-8", errors="replace")
         logger.error(f"[{step_name}] FAILED:\n{err_msg}")
         return err_msg
     return None
@@ -186,7 +211,7 @@ async def export_video_generator(
                 cmd += ["-i", audio_path, "-shortest"]
             cmd += ["-c:v", "copy"]
             if audio_path:
-                cmd += ["-c:a", AUDIO_CODEC, "-b:a", AUDIO_BITRATE]
+                cmd += ["-c:a", AUDIO_CODEC, "-b:a", AUDIO_BITRATE, "-ar", AUDIO_RATE, "-ac", AUDIO_CHANNELS]
             cmd.append(output_path)
 
             err = await _run_ffmpeg_async(cmd, "Final Concat/Mux")

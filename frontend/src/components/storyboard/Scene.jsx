@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useStoryBoard } from '../../context/StoryBoardContext';
-import { getSceneDuration, fileToBase64, getStorageItem, refreshSessionKey, formatSRTTimestamp } from '../../lib/storyboard-utils';
+import { getSceneDuration, fileToBase64, refreshSessionKey, formatSRTTimestamp } from '../../lib/storyboard-utils';
+import { useProjectSettings } from '../../hooks/useProjectSettings';
 import Sentence from './Sentence';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,8 +11,9 @@ import { Dialog, DialogContent, DialogTrigger, DialogTitle, DialogHeader } from 
 import { FaImage, FaMagic, FaTrash, FaUpload, FaDownload, FaPlus, FaCopy, FaPen, FaUnlink, FaEraser, FaExpand, FaSpinner, FaCheck, FaEdit } from 'react-icons/fa';
 import toast from 'react-hot-toast';
 
-const Scene = ({ scene, index }) => {
+const Scene = ({ scene, index, gallery = false }) => {
     const { state, dispatch } = useStoryBoard();
+    const { settings, flowAccounts } = useProjectSettings();
     const [isGeneratingImg, setIsGeneratingImg] = useState(false);
     const [isGeneratingTxt, setIsGeneratingTxt] = useState(false);
 
@@ -126,11 +128,6 @@ const Scene = ({ scene, index }) => {
             }
         }
 
-        const sessionData = getStorageItem('sb_global_session_key');
-        if (!sessionData.text) {
-            return toast.error("Google Flow cookies are missing. Please add them first.");
-        }
-
         setIsGeneratingImg(true);
         const toastId = toast.loading("Generating image...");
         try {
@@ -146,7 +143,9 @@ const Scene = ({ scene, index }) => {
             let endpoint = `${backendUrl}/api/generate-image`;
             let reqBody = {
                 prompt: scene.prompt,
-                session_token: sessionData.text,
+                session_token: flowAccounts[0]?.cookies || settings.flowCookies,
+                model: settings.imageModel || null,
+                flow_project_url: state.flowProjectUrl || null,
             };
 
             if (subjectIds.length > 0) {
@@ -177,6 +176,9 @@ const Scene = ({ scene, index }) => {
             }
 
             const data = await res.json();
+            if (data.flow_project_url && data.flow_project_url !== state.flowProjectUrl) {
+                dispatch({ type: 'SET_FLOW_PROJECT', payload: data.flow_project_url });
+            }
             let returnedImage = null;
             if (data?.imagePanels?.[0]?.generatedImages?.[0]?.encodedImage) {
                 const rawBase64 = data.imagePanels[0].generatedImages[0].encodedImage;
@@ -200,7 +202,6 @@ const Scene = ({ scene, index }) => {
     };
 
     const handleGeneratePrompt = async () => {
-        const instData = getStorageItem('sb_global_instructions');
 
         const sceneIndex = state.items.findIndex(i => i.id === scene.id);
         const previousScenes = state.items.slice(0, sceneIndex).filter(i => i.type === 'scene');
@@ -235,9 +236,10 @@ const Scene = ({ scene, index }) => {
                 body: JSON.stringify({
                     title: state.title || 'Untitled',
                     scene_lines: sceneText,
-                    instructions: instData.text ? instData.text : null,
+                    instructions: settings.instructions?.trim() ? settings.instructions : null,
                     previous_scenes: previousScenesPayload.length > 0 ? previousScenesPayload : null,
-                    characters: charactersPayload
+                    characters: charactersPayload,
+                    provider: settings.llmProvider
                 })
             });
 
@@ -380,7 +382,7 @@ const Scene = ({ scene, index }) => {
     const isImageGenDisabled = isBusy || (!!scene.image && scene.prompt === lastGeneratedPrompt);
 
     return (
-        <Card className="overflow-hidden border-slate-200 shadow-sm transition-shadow relative">
+        <Card className={`overflow-hidden border-slate-200 shadow-sm transition-all relative ${gallery ? 'h-full hover:border-purple-300 hover:shadow-md' : ''}`}>
 
             <Dialog open={!!linkDialog} onOpenChange={(open) => !open && setLinkDialog(null)}>
                 <DialogContent className="sm:max-w-md">
@@ -446,9 +448,9 @@ const Scene = ({ scene, index }) => {
             </div>
 
             <CardContent className="p-0">
-                <div className="flex flex-col md:flex-row border-b border-slate-100 bg-slate-50/30 p-4">
+                <div className={`flex flex-col border-b border-slate-100 bg-slate-50/30 p-4 ${gallery ? '' : 'md:flex-row'}`}>
 
-                    <div className="w-full md:w-1/3 pr-4 border-b md:border-b-0 md:border-r border-slate-100">
+                    <div className={`w-full ${gallery ? '' : 'md:w-1/3 pr-4 border-b md:border-b-0 md:border-r'} border-slate-100`}>
                         <div className="aspect-video bg-slate-100 rounded border border-slate-200 overflow-hidden relative group flex items-center justify-center">
 
                             {isBusy && (
@@ -506,7 +508,7 @@ const Scene = ({ scene, index }) => {
                         </div>
                     </div>
 
-                    <div className="w-full md:w-2/3 pl-0 md:pl-4 pt-4 md:pt-0 flex flex-col gap-2 relative">
+                    <div className={`w-full flex flex-col gap-2 relative ${gallery ? 'pt-3' : 'md:w-2/3 pl-0 md:pl-4 pt-4 md:pt-0'}`}>
                         {isEditingPrompt ? (
                             <div className="relative">
                                 <Textarea
@@ -523,44 +525,50 @@ const Scene = ({ scene, index }) => {
                                 </div>
                             </div>
                         ) : (
-                            <div className="relative h-24 bg-white border border-slate-200 rounded-md p-3 text-xs overflow-y-auto whitespace-pre-wrap">
+                            <div className={`relative bg-white border border-slate-200 rounded-md p-3 text-xs overflow-y-auto whitespace-pre-wrap ${gallery ? 'h-20' : 'h-24'}`}>
                                 {renderPromptWithLinks()}
                             </div>
                         )}
 
+                        {gallery && scene.imageGenError && (
+                            <p className="rounded bg-red-50 px-2 py-1 text-[10px] leading-4 text-red-600 line-clamp-2" title={scene.imageGenError}>
+                                Image failed: {scene.imageGenError}
+                            </p>
+                        )}
+
                         <div className="flex flex-wrap gap-2">
-                            <Button size="sm" className={`h-7 text-xs text-white ${isImageGenDisabled ? 'bg-slate-400' : 'bg-purple-600 hover:bg-purple-700'}`} onClick={handleGenerateImage} disabled={isImageGenDisabled} title={isImageGenDisabled ? "Change prompt to regenerate" : "Generate Image"}>
-                                {isBusy ? "..." : <><FaMagic className="mr-1" /> Gen Image</>}
+                            <Button size={gallery ? "icon" : "sm"} className={`${gallery ? 'h-7 w-7' : 'h-7 text-xs'} text-white ${isImageGenDisabled ? 'bg-slate-400' : 'bg-purple-600 hover:bg-purple-700'}`} onClick={handleGenerateImage} disabled={isImageGenDisabled} title={isImageGenDisabled ? "Change prompt to regenerate" : "Generate Image"}>
+                                {isBusy ? "..." : <><FaMagic className={gallery ? '' : 'mr-1'} />{!gallery && ' Gen Image'}</>}
                             </Button>
-                            <Button size="sm" variant="outline" className="h-7 text-xs text-slate-600" onClick={handleGeneratePrompt} disabled={isPromptBusy}>
-                                {isPromptBusy ? "..." : <><FaPen className="mr-1" /> Gen Prompt</>}
+                            <Button size={gallery ? "icon" : "sm"} variant="outline" className={`${gallery ? 'h-7 w-7' : 'h-7 text-xs'} text-slate-600`} onClick={handleGeneratePrompt} disabled={isPromptBusy} title="Generate prompt">
+                                {isPromptBusy ? "..." : <><FaPen className={gallery ? '' : 'mr-1'} />{!gallery && ' Gen Prompt'}</>}
                             </Button>
 
                             {!isEditingPrompt && (
-                                <Button size="sm" variant="outline" className="h-7 text-xs text-slate-600" onClick={() => setIsEditingPrompt(true)}>
-                                    <FaEdit className="mr-1" /> Edit
+                                <Button size={gallery ? "icon" : "sm"} variant="outline" className={`${gallery ? 'h-7 w-7' : 'h-7 text-xs'} text-slate-600`} onClick={() => setIsEditingPrompt(true)} title="Edit prompt">
+                                    <FaEdit className={gallery ? '' : 'mr-1'} />{!gallery && ' Edit'}
                                 </Button>
                             )}
 
-                            <Button size="sm" variant="outline" className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50 border-red-100" onClick={handleCleanScene} title="Clear Prompt & Image">
-                                <FaEraser className="mr-1" /> Clean
+                            <Button size={gallery ? "icon" : "sm"} variant="outline" className={`${gallery ? 'h-7 w-7' : 'h-7 text-xs'} text-red-500 hover:text-red-600 hover:bg-red-50 border-red-100`} onClick={handleCleanScene} title="Clear Prompt & Image">
+                                <FaEraser className={gallery ? '' : 'mr-1'} />{!gallery && ' Clean'}
                             </Button>
-                            <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-400 ml-auto" onClick={handleCopyScript} title="Copy text">
+                            <Button size={gallery ? "icon" : "sm"} variant="ghost" className={`${gallery ? 'h-7 w-7' : 'h-7 text-xs'} text-slate-400 ml-auto`} onClick={handleCopyScript} title="Copy text">
                                 <FaCopy />
                             </Button>
                         </div>
                     </div>
                 </div>
 
-                <div className="p-4 bg-white">
-                    <div className="space-y-0">
+                <div className={`bg-white ${gallery ? 'p-3' : 'p-4'}`}>
+                    {!gallery && <div className="space-y-0">
                         {scene.sentences.map(sent => (
                             <Sentence key={sent.id} sentence={sent} sceneId={scene.id} isNested={true} />
                         ))}
-                    </div>
-                    <div className="mt-2 flex justify-center">
-                        <Button variant="ghost" size="sm" className="h-6 text-xs text-slate-400 hover:text-blue-600 hover:bg-blue-50" onClick={() => dispatch({ type: 'ADD_SENTENCE', payload: scene.id })}>
-                            <FaPlus className="mr-1" /> Add Sentence
+                    </div>}
+                    <div className={`${gallery ? 'mt-0' : 'mt-2'} flex justify-center`}>
+                        <Button variant="ghost" size={gallery ? "icon" : "sm"} className={`${gallery ? 'h-7 w-7' : 'h-6 text-xs'} text-slate-400 hover:text-blue-600 hover:bg-blue-50`} onClick={() => dispatch({ type: 'ADD_SENTENCE', payload: scene.id })} title="Add sentence">
+                            <FaPlus className={gallery ? '' : 'mr-1'} />{!gallery && ' Add Sentence'}
                         </Button>
                     </div>
                 </div>

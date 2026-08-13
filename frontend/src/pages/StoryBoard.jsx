@@ -1,17 +1,20 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { StoryBoardProvider, useStoryBoard } from '../context/StoryBoardContext';
 import TopBar from '../components/storyboard/TopBar';
 import Scene from '../components/storyboard/Scene';
 import Sentence from '../components/storyboard/Sentence';
 import CharactersSection from '../components/storyboard/CharactersSection';
+import StudioSidebar from '../components/storyboard/StudioSidebar';
 import { Button } from '@/components/ui/button';
-import { FaPlus } from 'react-icons/fa';
-import { useNavigate } from 'react-router-dom';
+import { FaPlus, FaThLarge, FaList, FaMagic, FaFileImport, FaArrowRight } from 'react-icons/fa';
+import { useParams } from 'react-router-dom';
 
 const StoryBoardInner = () => {
     const { state, dispatch } = useStoryBoard();
     const lastSelectedIdRef = useRef(null);
-    const navigate = useNavigate();
+    const [viewMode, setViewMode] = useState('list');
+
+    const scenes = state.items.filter(item => item.type === 'scene');
 
     const handleSelection = (id, index, isShift) => {
         if (isShift && lastSelectedIdRef.current) {
@@ -32,44 +35,78 @@ const StoryBoardInner = () => {
     };
 
     return (
-        <div className="min-h-screen bg-slate-100 pb-20 relative">
+        <div className="studio-app min-h-screen relative">
+            <StudioSidebar />
+            <div className="studio-main-shell">
+                <TopBar />
+                <main id="storyboard" className={`${viewMode === 'gallery' ? 'max-w-[1540px]' : 'max-w-6xl'} mx-auto px-6 py-8 space-y-5 transition-[max-width] duration-200`}>
 
-            <TopBar />
+                <div id="characters"><CharactersSection /></div>
 
-            <main className="max-w-5xl mx-auto mt-8 px-4 space-y-4">
-
-                <CharactersSection />
-
-                <div className="flex items-center justify-between px-1 border-b border-slate-200 pb-2">
-                    <h3 className="text-sm font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
-                        Story Board
-                    </h3>
+                <div className="studio-board-heading">
+                    <div>
+                        <p className="studio-eyebrow">Creative workspace</p>
+                        <h1>Storyboard</h1>
+                    </div>
+                    <div className="studio-view-switcher" aria-label="Storyboard view">
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className={`h-8 px-3 text-xs ${viewMode === 'list' ? 'studio-view-active' : 'text-slate-500'}`}
+                            onClick={() => setViewMode('list')}
+                            title="Vertical editor view"
+                        >
+                            <FaList className="mr-1.5" /> Editor
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className={`h-8 px-3 text-xs ${viewMode === 'gallery' ? 'studio-view-active' : 'text-slate-500'}`}
+                            onClick={() => setViewMode('gallery')}
+                            title="Gallery view"
+                        >
+                            <FaThLarge className="mr-1.5" /> Gallery
+                        </Button>
+                    </div>
                 </div>
 
                 {state.items.length === 0 ? (
-                    <div className="text-center py-1 flex flex-col items-center gap-3">
-                        <p className="text-sm text-muted-foreground">Start by adding items.</p>
-                        <div className="flex gap-2">
+                    <section className="studio-empty-state">
+                        <div className="studio-empty-orb"><FaMagic /></div>
+                        <p className="studio-eyebrow">Your canvas is ready</p>
+                        <h2>Turn your idea into a visual story.</h2>
+                        <p className="studio-empty-copy">Build your storyboard scene by scene, or bring in an existing script and let the studio do the first pass.</p>
+                        <div className="flex flex-wrap justify-center gap-3">
                             <Button
-                                size="sm"
+                                size="lg"
                                 onClick={() => dispatch({ type: 'ADD_ITEM', payload: { type: 'scene' } })}
-                                className="bg-blue-600 hover:bg-blue-700 text-white"
+                                className="studio-primary-action"
                             >
-                                <FaPlus className="mr-2" /> Add Scene
+                                <FaPlus className="mr-2" /> Create first scene
                             </Button>
                             <Button
-                                size="sm"
+                                size="lg"
                                 variant="outline"
                                 onClick={() => dispatch({ type: 'ADD_ITEM', payload: { type: 'sentence' } })}
+                                className="studio-secondary-action"
                             >
-                                <FaPlus className="mr-2" /> Add Sentence
+                                <FaArrowRight className="mr-2" /> Start with a sentence
                             </Button>
                         </div>
-                    </div>
+                        <div className="studio-empty-tip"><FaFileImport /> Import an SRT transcript from the project menu to start with your script.</div>
+                    </section>
+                ) : viewMode === 'gallery' ? (
+                    scenes.length ? (
+                        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                            {scenes.map((scene, sceneIndex) => <Scene key={scene.id} scene={scene} index={sceneIndex} gallery />)}
+                        </div>
+                    ) : (
+                        <p className="py-8 text-center text-sm text-muted-foreground">Group sentences into scenes to see them in the gallery.</p>
+                    )
                 ) : (
                     state.items.map((item, index) => {
                         if (item.type === 'scene') {
-                            return <Scene key={item.id} scene={item} index={index} />;
+                            return <div id={`scene-${item.id}`} key={item.id}><Scene scene={item} index={index} /></div>;
                         } else {
                             return (
                                 <Sentence
@@ -85,8 +122,8 @@ const StoryBoardInner = () => {
                 )}
 
                 {state.items.length > 0 && (
-                    <div className="flex justify-center py-6 gap-4">
-                        <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow border border-slate-200 hover:shadow-md transition-shadow">
+                    <div className="flex justify-center py-8">
+                        <div className="studio-add-bar">
                             <Button
                                 variant="ghost"
                                 size="sm"
@@ -106,15 +143,19 @@ const StoryBoardInner = () => {
                         </div>
                     </div>
                 )}
-            </main>
+                </main>
+            </div>
         </div>
     );
 };
 
-const StoryBoard = () => (
-    <StoryBoardProvider>
+const StoryBoard = () => {
+    const { projectId } = useParams();
+    return (
+    <StoryBoardProvider projectId={projectId}>
         <StoryBoardInner />
     </StoryBoardProvider>
-);
+    );
+};
 
 export default StoryBoard;
