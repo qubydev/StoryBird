@@ -8,6 +8,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# setup.sh may have installed Node or ffmpeg into .tools; make them visible
+# here too, otherwise a machine that got them that way cannot start the app.
+TOOLS_DIR="$PWD/.tools"
+export PATH="$TOOLS_DIR/node/bin:$TOOLS_DIR/ffmpeg:$PATH"
+
 PORT="${PORT:-8000}"
 PRODUCTION=0
 [ "${1:-}" = "--production" ] && PRODUCTION=1

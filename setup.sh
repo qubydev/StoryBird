@@ -41,6 +41,77 @@ fail() { printf "  ${RED}[fail]${RESET} %s\n" "$1"; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Anything we install ourselves lands here, so no step needs sudo and nothing
+# is scattered across the machine. run.sh puts it on PATH too.
+TOOLS_DIR="$PWD/.tools"
+export PATH="$TOOLS_DIR/node/bin:$TOOLS_DIR/ffmpeg:$PATH"
+
+case "$(uname -s)" in
+    Darwin) OS=mac ;;
+    Linux)  OS=linux ;;
+    *)      OS=other ;;
+esac
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64|amd64) NODE_ARCH=x64 ;;
+    arm64|aarch64) NODE_ARCH=arm64 ;;
+    *) NODE_ARCH='' ;;
+esac
+
+fetch() {
+    local url="$1" out="$2"
+    if have curl; then curl -fsSL "$url" -o "$out"
+    elif have wget; then wget -q "$url" -O "$out"
+    else return 1; fi
+}
+
+# Portable Node: no package manager, no sudo, cannot collide with anything.
+install_node_portable() {
+    [ -n "$NODE_ARCH" ] || return 1
+    [ "$OS" = "other" ] && return 1
+    local version='v22.12.0'
+    local platform="$OS"
+    [ "$OS" = "mac" ] && platform=darwin
+    local name="node-$version-$platform-$NODE_ARCH"
+    local url="https://nodejs.org/dist/$version/$name.tar.xz"
+    info "Downloading the portable Node.js build (~30 MB)..."
+    mkdir -p "$TOOLS_DIR"
+    fetch "$url" "/tmp/$name.tar.xz" || return 1
+    tar -xJf "/tmp/$name.tar.xz" -C "$TOOLS_DIR" || return 1
+    rm -f "/tmp/$name.tar.xz"
+    rm -rf "$TOOLS_DIR/node"
+    mv "$TOOLS_DIR/$name" "$TOOLS_DIR/node"
+    export PATH="$TOOLS_DIR/node/bin:$PATH"
+    have node
+}
+
+# Static ffmpeg build, same reasoning.
+install_ffmpeg_portable() {
+    mkdir -p "$TOOLS_DIR/ffmpeg"
+    if [ "$OS" = "linux" ] && [ "$NODE_ARCH" = "x64" ]; then
+        info "Downloading a static ffmpeg build (~30 MB)..."
+        fetch 'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz' /tmp/ffmpeg.tar.xz || return 1
+        tar -xJf /tmp/ffmpeg.tar.xz -C /tmp || return 1
+        local extracted
+        extracted=$(find /tmp -maxdepth 1 -type d -name 'ffmpeg-*-static' | head -1)
+        [ -n "$extracted" ] || return 1
+        cp "$extracted/ffmpeg" "$extracted/ffprobe" "$TOOLS_DIR/ffmpeg/"
+        rm -rf "$extracted" /tmp/ffmpeg.tar.xz
+    elif [ "$OS" = "mac" ]; then
+        info "Downloading ffmpeg and ffprobe..."
+        fetch 'https://evermeet.cx/ffmpeg/getrelease/zip' /tmp/ffmpeg.zip || return 1
+        unzip -oq /tmp/ffmpeg.zip -d "$TOOLS_DIR/ffmpeg" || return 1
+        fetch 'https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip' /tmp/ffprobe.zip \
+            && unzip -oq /tmp/ffprobe.zip -d "$TOOLS_DIR/ffmpeg" || true
+        rm -f /tmp/ffmpeg.zip /tmp/ffprobe.zip
+    else
+        return 1
+    fi
+    chmod +x "$TOOLS_DIR/ffmpeg/"* 2>/dev/null || true
+    export PATH="$TOOLS_DIR/ffmpeg:$PATH"
+    have ffmpeg
+}
+
 # Pick the package manager once so each install reads the same.
 if have brew;    then PKG='brew install'
 elif have apt-get; then PKG='sudo apt-get install -y'
@@ -93,8 +164,15 @@ if have node; then
     if [ "$node_major" -ge 18 ]; then ok "Found Node $(node --version)"
     else warn "Node $(node --version) is old; the frontend needs 18+."; fi
 else
+    info "Node.js 18+ not found. Installing it now..."
     install_pkg nodejs "Node.js" || true
-    have node && ok "Installed Node $(node --version)" || { fail "Node.js is required for the frontend."; exit 1; }
+    if ! have node; then install_node_portable || true; fi
+    if have node; then
+        ok "Installed Node $(node --version)"
+    else
+        fail "Could not install Node.js automatically. Install the LTS build from https://nodejs.org and re-run."
+        exit 1
+    fi
 fi
 have npm || { fail "npm is required. Install it alongside Node.js."; exit 1; }
 
@@ -103,9 +181,11 @@ step "ffmpeg"
 if have ffmpeg; then
     ok "$(ffmpeg -version 2>&1 | head -1)"
 else
+    info "ffmpeg not found. Installing it now..."
     install_pkg ffmpeg "ffmpeg" || true
+    if ! have ffmpeg; then install_ffmpeg_portable || true; fi
     if have ffmpeg; then ok "ffmpeg installed"
-    else warn "ffmpeg is not installed. Video export and script alignment will fail until it is."; fi
+    else warn "ffmpeg could not be installed. Video export and script alignment will fail until it is on PATH."; fi
 fi
 
 # ─── 4. Virtual environment ──────────────────────────────────────────────────

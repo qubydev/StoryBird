@@ -86,6 +86,9 @@ dmypy.json
 # Pylint
 pylint.log
 
+# Tools setup installs locally (portable Node, ffmpeg)
+.tools/
+
 # Custom folders
 uploads/
 outputs/

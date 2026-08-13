@@ -21,6 +21,15 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 
+# setup.ps1 may have installed Node or ffmpeg into .tools; make them visible
+# here too, otherwise a machine that got them that way cannot start the app.
+$toolsDir = Join-Path $root '.tools'
+foreach ($toolPath in @((Join-Path $toolsDir 'node'), (Join-Path $toolsDir 'ffmpeg\bin'))) {
+    if ((Test-Path $toolPath) -and ($env:Path -split ';' -notcontains $toolPath)) {
+        $env:Path = "$toolPath;$env:Path"
+    }
+}
+
 $venvPython = Join-Path $root 'venv\Scripts\python.exe'
 if (-not (Test-Path $venvPython)) {
     Write-Host 'The virtual environment is missing. Run .\setup.ps1 first.' -ForegroundColor Red
