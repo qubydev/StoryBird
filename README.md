@@ -1,4 +1,51 @@
-# Setup
+# Anim Board
+
+Turn a script into a narrated, storyboarded video.
+
+## Quick start
+
+One command sets up everything: Python, Node.js, ffmpeg, the virtual
+environment, the Chromium build that drives Google Flow, the frontend packages
+and your `.env`. It is safe to re-run at any time.
+
+**Windows**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File setup.ps1
+.\run.ps1
+```
+
+**macOS / Linux**
+
+```bash
+./setup.sh
+./run.sh
+```
+
+Then open <http://localhost:5173>.
+
+Useful flags: `-PrefetchModel` / `--prefetch` downloads the 1.2 GB alignment
+model up front instead of during your first voiceover; `-Recreate` /
+`--recreate` rebuilds the virtual environment.
+
+### What you still need to supply
+
+| What | Where | Needed for |
+|---|---|---|
+| FameSpeak API key | `.env` (setup prompts for it) | Voiceover |
+| OpenRouter **or** Groq key | `.env` (setup prompts for it) | Scene grouping, image prompts |
+| Google Flow cookies | Settings, in the app | Image generation |
+
+Flow cookies are pasted in the app rather than `.env`: open **Settings** on the
+dashboard for the default, or inside a storyboard to override it there only.
+Add more than one Flow account and images generate in parallel, one job per
+account.
+
+## Manual setup
+
+The steps below are what `setup.ps1` / `setup.sh` automate. You only need them
+if you would rather do it by hand.
+
 
 ## Backend
 
