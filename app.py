@@ -112,12 +112,24 @@ app.include_router(router, prefix="/api")
 # Static Files + SPA
 # --------------------------------------------------
 dist_path = Path(__file__).parent / "frontend" / "dist"
+exports_path = Path(__file__).parent / "exports"
 
-app.mount(
-    "/static",
-    StaticFiles(directory=dist_path / "assets"),
-    name="static",
-)
+# Exported videos are served from here. The export writes the folder on demand,
+# so create it up front: StaticFiles refuses to mount a missing directory, and
+# without this mount the SPA catch-all below swallows /exports/<file>.mp4 and
+# the in-app preview and download link return HTML instead of a video.
+exports_path.mkdir(exist_ok=True)
+app.mount("/exports", StaticFiles(directory=exports_path), name="exports")
+
+# The frontend build is optional: in development Vite serves the UI on its own
+# port, and a fresh clone has no dist yet. Mounting it unconditionally made the
+# backend fail to import on any machine that had not run `npm run build`.
+if (dist_path / "assets").is_dir():
+    app.mount(
+        "/static",
+        StaticFiles(directory=dist_path / "assets"),
+        name="static",
+    )
 
 
 @app.get("/{full_path:path}")
