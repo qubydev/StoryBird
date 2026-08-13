@@ -54,6 +54,17 @@ function Test-Command ($name) {
     return [bool](Get-Command $name -ErrorAction SilentlyContinue)
 }
 
+# Probe for installed modules WITHOUT importing them and without writing to
+# stderr. Redirecting a native command's stderr (2>$null) makes PowerShell 5.1
+# raise a terminating NativeCommandError while ErrorActionPreference is 'Stop',
+# which aborted setup on what is only meant to be a question.
+function Test-PythonModule ($interpreter, [string[]]$modules) {
+    $list = ($modules | ForEach-Object { "'$_'" }) -join ','
+    $code = "import importlib.util as u; print('yes' if all(u.find_spec(m) for m in [$list]) else 'no')"
+    $answer = & $interpreter -c $code
+    return ("$answer".Trim() -eq 'yes')
+}
+
 function Install-WithWinget ($id, $label) {
     if (-not (Test-Command 'winget')) {
         Write-Warn "$label is missing and winget is unavailable. Install $label manually, then re-run this script."
@@ -78,7 +89,7 @@ Write-Step 'Python 3.10+'
 $python = $null
 foreach ($candidate in @('python', 'python3', 'py')) {
     if (-not (Test-Command $candidate)) { continue }
-    try { $raw = & $candidate --version 2>&1 } catch { continue }
+    try { $raw = & $candidate --version } catch { continue }
     if ("$raw" -match '(\d+)\.(\d+)\.(\d+)') {
         $major = [int]$Matches[1]; $minor = [int]$Matches[2]
         if ($major -eq 3 -and $minor -ge 10) { $python = $candidate; Write-Ok "Found $raw"; break }
@@ -96,11 +107,11 @@ if (-not $python) {
         Write-Fail 'Python 3.10+ is required. Install it from https://python.org and re-run.'
         exit 1
     }
-    Write-Ok "Installed $(& $python --version 2>&1)"
+    Write-Ok "Installed $(& $python --version)"
 }
 
 # torch has no wheels beyond 3.13 yet; alignment would silently fall back.
-$versionText = "$(& $python --version 2>&1)"
+$versionText = "$(& $python --version)"
 if ($versionText -match '3\.(\d+)' -and [int]$Matches[1] -ge 14) {
     Write-Warn "Python $versionText may have no PyTorch wheels. If alignment fails to install, use Python 3.12."
 }
@@ -122,7 +133,7 @@ if (Test-Command 'node') {
 # -------------------- 3. ffmpeg ---------------------------------------------------------------
 Write-Step 'ffmpeg'
 if (Test-Command 'ffmpeg') {
-    Write-Ok "Found $(((& ffmpeg -version 2>&1) | Select-Object -First 1))"
+    Write-Ok "Found $((& ffmpeg -version | Select-Object -First 1))"
 } else {
     Install-WithWinget 'Gyan.FFmpeg' 'ffmpeg' | Out-Null
     if (Test-Command 'ffmpeg') {
@@ -160,16 +171,14 @@ Write-Step 'Python packages'
 # CPU wheels must be installed first and explicitly. requirements.txt lists
 # torch/torchaudio plainly, and plain pip would pull multi-gigabyte CUDA builds
 # this app never uses.
-$torchInstalled = $false
-& $venvPython -c "import torch, torchaudio" 2>$null
-if ($LASTEXITCODE -eq 0) {
+$torchInstalled = Test-PythonModule $venvPython @('torch', 'torchaudio')
+if ($torchInstalled) {
     Write-Ok "torch $(& $venvPython -c 'import torch; print(torch.__version__)') already installed"
-    $torchInstalled = $true
 } else {
     Write-Info 'Installing CPU builds of torch and torchaudio (~250 MB)...'
     & $venvPython -m pip install --quiet torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-    & $venvPython -c "import torch, torchaudio" 2>$null
-    if ($LASTEXITCODE -eq 0) { Write-Ok 'torch and torchaudio installed'; $torchInstalled = $true }
+    $torchInstalled = Test-PythonModule $venvPython @('torch', 'torchaudio')
+    if ($torchInstalled) { Write-Ok 'torch and torchaudio installed' }
     else { Write-Warn 'torch could not be installed. The app still runs; sentence timings fall back to an estimate.' }
 }
 
@@ -276,11 +285,12 @@ if (-not $torchInstalled) {
 
 # -------------------- 10. Verify --------------------------------------------------------------
 Write-Step 'Verifying the install'
-& $venvPython -c "import app; import routes; print('backend imports ok')"
+& $venvPython -c "import app, routes"
 if ($LASTEXITCODE -ne 0) { Write-Fail 'The backend failed to import. Check the error above.'; exit 1 }
 Write-Ok 'Backend imports cleanly'
 
-& $venvPython -c "from utils.align import is_available; print('alignment available:', is_available())"
+if (Test-PythonModule $venvPython @('torch', 'torchaudio')) { Write-Ok 'Forced alignment available (real sentence timings)' }
+else { Write-Warn 'Forced alignment unavailable - sentence timings will be estimated' }
 
 if (Test-Command 'ffmpeg') { Write-Ok 'ffmpeg reachable' } else { Write-Warn 'ffmpeg still not on PATH - reopen your terminal after installing it' }
 
